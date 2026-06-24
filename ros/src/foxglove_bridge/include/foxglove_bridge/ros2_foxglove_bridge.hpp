@@ -32,6 +32,9 @@
 #include <foxglove_bridge/param_utils.hpp>
 #include <foxglove_bridge/parameter_interface.hpp>
 #include <foxglove_bridge/utils.hpp>
+#ifdef FOXGLOVE_BRIDGE_WITH_IOX2
+#include <foxglove_bridge/iox2_source.hpp>
+#endif
 
 namespace foxglove_bridge {
 
@@ -152,6 +155,11 @@ private:
   std::unordered_map<std::string, std::shared_ptr<RosMsgParser::Parser>> _jsonParsers;
   std::atomic<bool> _shuttingDown = false;
   foxglove::Context _serverContext;
+
+#ifdef FOXGLOVE_BRIDGE_WITH_IOX2
+  // Declared after _serverContext so it is destroyed before the context it logs to.
+  std::unique_ptr<Iox2Source> _iox2Source;
+#endif
 
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr _clientCountPublisher;
 

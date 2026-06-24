@@ -1,0 +1,26 @@
+# Example parameters for the optional iceoryx2 source (FOXGLOVE_BRIDGE_WITH_IOX2=ON).
+#
+# Load alongside the bridge, e.g.:
+#   ros2 run foxglove_bridge foxglove_bridge --ros-args --params-file iox2_services.example.yaml
+#
+# Each index across the four parallel arrays defines one bridged service. An empty
+# service_names list leaves the iox2 source inert (the bridge then serves only ROS data).
+/**:
+  ros__parameters:
+    iox2:
+      # Directory containing the .bfbs (binary FlatBuffer) schema files.
+      schema_dir: "/path/to/bfbs"
+      # Subscriber poll period in milliseconds.
+      poll_interval_ms: 1
+      # iceoryx2 user-header type name. Leave empty to use the bridge's default contract
+      # name, or set it to match your publisher's header type name (so the bridge can
+      # attach to publishers that use a different header name without code changes).
+      user_header_type_name: ""
+      # iox2 publish-subscribe service names to subscribe to.
+      service_names: ["/livox/points"]
+      # Foxglove topic names to advertise (usually mirrors service_names).
+      topics: ["/livox/points"]
+      # Foxglove schema names (well-known foxglove.* schemas recommended).
+      schema_names: ["foxglove.PointCloud"]
+      # .bfbs file (relative to schema_dir) describing each topic's payload.
+      bfbs_files: ["PointCloud.bfbs"]

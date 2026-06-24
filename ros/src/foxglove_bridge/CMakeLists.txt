@@ -59,6 +59,12 @@ if(FOXGLOVE_BRIDGE_REMOTE_ACCESS AND _glibc_too_old)
   message(WARNING "FOXGLOVE_BRIDGE_REMOTE_ACCESS=ON but build host has glibc ${_glibc_version} (< 2.35); the link step is likely to fail.")
 endif()
 
+# Optional iceoryx2 source. When ON, an iceoryx2 source is compiled into the bridge so iox2 and ROS data are served over one
+# WebSocket. Requires iceoryx2-cxx in the build environment; the wire contract (user
+# header) is defined in-package, so there is no vendor dependency. When OFF (default),
+# the bridge is the unmodified upstream ROS 2 bridge with no iox2 dependency.
+option(FOXGLOVE_BRIDGE_WITH_IOX2 "Build with the optional iceoryx2 source" OFF)
+
 macro(enable_strict_compiler_warnings target)
   if (MSVC)
     target_compile_options(${target} PRIVATE /WX /W4)
@@ -200,6 +206,19 @@ target_link_libraries(foxglove_bridge_component
   rosidl_typesupport_introspection_cpp::rosidl_typesupport_introspection_cpp
   rosx_introspection::rosx_introspection
 )
+
+if(FOXGLOVE_BRIDGE_WITH_IOX2)
+  # iceoryx2-cxx provides the iox2 C++ bindings. The wire contract (the user-header struct)
+  # is defined inside this package (foxglove_bridge/iox2_message_header.hpp), so there is no
+  # dependency on any external/vendor package and the source stays upstreamable.
+  find_package(iceoryx2-cxx REQUIRED)
+  target_sources(foxglove_bridge_component PRIVATE src/iox2_source.cpp)
+  target_compile_definitions(foxglove_bridge_component PUBLIC FOXGLOVE_BRIDGE_WITH_IOX2)
+  # iceoryx2-cxx propagates its required C++ standard via PUBLIC compile features (cxx_std_17 by default)
+  target_link_libraries(foxglove_bridge_component
+    iceoryx2-cxx::static-lib-cxx
+  )
+endif()
 
 rclcpp_components_register_nodes(foxglove_bridge_component "foxglove_bridge::FoxgloveBridge")
 enable_strict_compiler_warnings(foxglove_bridge_component)
