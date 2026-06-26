@@ -40,13 +40,25 @@ this bridge must publish a `Slice<uint8_t>` payload with a user header of this e
 
 #### Matching the publisher's header type (header mode)
 
-iceoryx2 matches on a type-name *string*, not on the C++ type, so the user-header type name
-is **runtime-configurable**. The bridge resolves it via an `IOX2_DEFINE_TYPE_NAME`
-specialization that calls `iox2UserHeaderTypeName()`, which the `iox2.user_header_type_name`
-parameter sets at startup. Leave the parameter empty to use the default contract name
-(`foxglove_bridge::Iox2MessageHeader`), or set it to whatever iceoryx2 type name your
-publisher uses for its header. This lets the bridge attach to publishers that use a
-differently-named header type (e.g. a vendor `MsgHeader`) without any code change.
+iceoryx2 matches on a type-name *string*, not on the C++ type. When a header type exposes a
+static `IOX2_TYPE_NAME` member, iceoryx2 uses it verbatim; otherwise it derives the name from
+the C++ type (`"__cxx__abi__" + typeid(T).name()`). `Iox2MessageHeader` carries an
+`IOX2_TYPE_NAME` member so the bridge's subscriber can match a publisher whose C++ header type
+has a different name, without depending on the publisher's package.
+
+The name is a **build-time** setting (not a ROS parameter, because the iceoryx2 version this
+bridge targets resolves it at compile time). It defaults to `foxglove_bridge::Iox2MessageHeader`;
+override it to match the publisher:
+
+```bash
+colcon build --packages-select foxglove_bridge --cmake-args \
+  -DFOXGLOVE_BRIDGE_WITH_IOX2=ON \
+  -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=__cxx__abi__N6gravis11iox2_common9MsgHeaderE
+```
+
+(That example value is what iceoryx2 derives for a publisher using
+`gravis::iox2_common::MsgHeader` with no `IOX2_TYPE_NAME` member — i.e.
+`__cxx__abi__` + `typeid(gravis::iox2_common::MsgHeader).name()`.)
 
 Two caveats on the match:
 
@@ -56,8 +68,8 @@ Two caveats on the match:
   the field layout — two headers with the same size/alignment/name but different field
   meanings would be accepted and produce garbage, so keep the struct in sync deliberately.
 * **Length limit.** iceoryx2 caps type names at 255 characters and truncates silently beyond
-  that, which would then fail to match for a non-obvious reason. Keep
-  `user_header_type_name` within 255 characters.
+  that, which would then fail to match for a non-obvious reason. Keep the name within 255
+  characters.
 
 ## Building
 
@@ -101,7 +113,6 @@ iox2 services are configured via ROS parameters under the `iox2.` prefix. See
 | `iox2.schema_dir` | string | Directory holding the `.bfbs` schema files |
 | `iox2.poll_interval_ms` | int | Subscriber poll period (default 1) |
 | `iox2.use_message_header` | bool | `true` (default): read an `Iox2MessageHeader` per sample; `false`: whole payload is the FlatBuffer, log time is the bridge's receive time |
-| `iox2.user_header_type_name` | string | Header mode only: override the iceoryx2 user-header type name to match the publisher (empty = default contract name, ≤ 255 chars) |
 | `iox2.service_names` | string[] | iox2 services to subscribe to |
 | `iox2.topics` | string[] | Foxglove topics to advertise (parallel to services) |
 | `iox2.schema_names` | string[] | Foxglove schema names (parallel) |

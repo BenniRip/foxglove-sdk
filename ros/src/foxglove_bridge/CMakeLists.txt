@@ -214,6 +214,13 @@ if(FOXGLOVE_BRIDGE_WITH_IOX2)
   find_package(iceoryx2-cxx REQUIRED)
   target_sources(foxglove_bridge_component PRIVATE src/iox2_source.cpp)
   target_compile_definitions(foxglove_bridge_component PUBLIC FOXGLOVE_BRIDGE_WITH_IOX2)
+  # Optional override of the iceoryx2 user-header type name (Iox2MessageHeader::IOX2_TYPE_NAME),
+  # to match a publisher whose header uses a different iceoryx2 type name. CMake handles quoting
+  # the string into the compile definition. Leave unset to use the default contract name.
+  if(FOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME)
+    target_compile_definitions(foxglove_bridge_component PRIVATE
+      FOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME="${FOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME}")
+  endif()
   # iceoryx2-cxx propagates its required C++ standard via PUBLIC compile features (cxx_std_17 by default)
   target_link_libraries(foxglove_bridge_component
     iceoryx2-cxx::static-lib-cxx

@@ -9,27 +9,15 @@
 #include <optional>
 #include <stdexcept>
 
-#include <iox2/type_name.hpp>
-
 #include <foxglove/error.hpp>
 
-// Decouple the iceoryx2 user-header type identity from the C++ type: resolve the type name at
-// runtime from foxglove_bridge::iox2UserHeaderTypeName(), so it can be overridden via a
-// parameter to match any publisher's header type name without recompiling. The macro wraps the
-// expression in a function that iceoryx2 calls at service-build time (it copies the name into a
-// fixed-capacity StaticString, so the returned pointer only has to be valid for that call), and
-// the value is read per service-build call rather than cached. This specialization must be
-// visible before the service builder is instantiated for Iox2MessageHeader.
-IOX2_DEFINE_TYPE_NAME(foxglove_bridge::Iox2MessageHeader,
-                      foxglove_bridge::iox2UserHeaderTypeName());
+// The iceoryx2 user-header type name is carried by Iox2MessageHeader::IOX2_TYPE_NAME (a static
+// member iceoryx2 reads to identify the type); it defaults to the bridge's contract name and is
+// overridable at build time via -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=... to match a
+// publisher whose header uses a different iceoryx2 type name. See iox2_message_header.hpp.
 
 namespace foxglove_bridge {
 namespace {
-
-std::string& userHeaderTypeNameStorage() {
-  static std::string storage = "foxglove_bridge::Iox2MessageHeader";
-  return storage;
-}
 
 std::string loadBinaryFile(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
@@ -161,30 +149,12 @@ std::unique_ptr<Iox2Subscription> openSubscription(iox2::Node<iox2::ServiceType:
 
 }  // namespace
 
-const char* iox2UserHeaderTypeName() {
-  return userHeaderTypeNameStorage().c_str();
-}
-
-void setIox2UserHeaderTypeName(const std::string& name) {
-  if (!name.empty()) {
-    userHeaderTypeNameStorage() = name;
-  }
-}
-
 Iox2Source::Iox2Source(rclcpp::Node& node, const foxglove::Context& context)
     : node_(node) {
   const auto configs = loadParameters();
   if (configs.empty()) {
     RCLCPP_INFO(node_.get_logger(), "iox2 source: no services configured, disabled");
     return;
-  }
-
-  if (useHeader_) {
-    // Apply the configured iceoryx2 user-header type name before opening any service. The
-    // service builder reads it at open time via the IOX2_DEFINE_TYPE_NAME specialization above,
-    // and that value is evaluated per service-build call rather than cached, so this must run
-    // before setupSubscribers(). (Headerless mode uses the void header and ignores this name.)
-    setIox2UserHeaderTypeName(userHeaderTypeName_);
   }
 
   setupSubscribers(context, configs);
@@ -205,7 +175,6 @@ std::vector<Iox2Source::Config> Iox2Source::loadParameters() {
   node_.declare_parameter("iox2.schema_dir", std::string(""));
   node_.declare_parameter("iox2.poll_interval_ms", 1);
   node_.declare_parameter("iox2.use_message_header", true);
-  node_.declare_parameter("iox2.user_header_type_name", std::string(""));
   node_.declare_parameter("iox2.service_names", std::vector<std::string>{});
   node_.declare_parameter("iox2.topics", std::vector<std::string>{});
   node_.declare_parameter("iox2.schema_names", std::vector<std::string>{});
@@ -213,7 +182,6 @@ std::vector<Iox2Source::Config> Iox2Source::loadParameters() {
 
   schemaDir_ = node_.get_parameter("iox2.schema_dir").as_string();
   useHeader_ = node_.get_parameter("iox2.use_message_header").as_bool();
-  userHeaderTypeName_ = node_.get_parameter("iox2.user_header_type_name").as_string();
   const auto serviceNames = node_.get_parameter("iox2.service_names").as_string_array();
   const auto topics = node_.get_parameter("iox2.topics").as_string_array();
   const auto schemaNames = node_.get_parameter("iox2.schema_names").as_string_array();

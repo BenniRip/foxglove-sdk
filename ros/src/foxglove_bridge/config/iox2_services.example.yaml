@@ -18,12 +18,11 @@
       # time is used as the log time. The header path is a stopgap and is expected to be
       # retired once iceoryx2 ships first-class FlatBuffer support.
       use_message_header: true
-      # iceoryx2 user-header type name (header mode only; ignored when use_message_header is
-      # false). Leave empty to use the bridge's default contract name, or set it to match your
-      # publisher's header type name (so the bridge can attach to publishers that use a
-      # different header name without code changes). Must be <= 255 characters; the header's
-      # size and alignment must also match the publisher's, not just the name.
-      user_header_type_name: ""
+      # NOTE: the iceoryx2 user-header *type name* is a build-time setting, not a parameter.
+      # It defaults to the bridge's own contract name; override it to match your publisher with
+      #   -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=<name>
+      # at build time (the header's size/alignment must match the publisher's too, not just the
+      # name; must be <= 255 characters).
       # iox2 publish-subscribe service names to subscribe to.
       service_names: ["/livox/points"]
       # Foxglove topic names to advertise (usually mirrors service_names).

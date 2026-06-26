@@ -59,8 +59,8 @@ struct Iox2Subscription {
 ///       when false, the whole payload slice is the FlatBuffer and the bridge's receive time
 ///       is used. The header path is a stopgap and is expected to be retired once iceoryx2
 ///       ships first-class FlatBuffer support.
-///   - iox2.user_header_type_name (string): override the iceoryx2 user-header type name to
-///       match the publisher (empty keeps the default contract name; header mode only)
+/// The iceoryx2 user-header type name is a build-time setting (Iox2MessageHeader::IOX2_TYPE_NAME,
+/// overridable via -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=...), not a ROS parameter.
 /// An empty service_names list disables the source (no-op).
 class Iox2Source {
 public:
@@ -96,7 +96,6 @@ private:
 
   rclcpp::Node& node_;
   std::filesystem::path schemaDir_;
-  std::string userHeaderTypeName_;
   bool useHeader_ = true;
   std::unique_ptr<IpcNode> iox2Node_;
   std::vector<Entry> entries_;
