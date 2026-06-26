@@ -12,9 +12,17 @@
       schema_dir: "/path/to/bfbs"
       # Subscriber poll period in milliseconds.
       poll_interval_ms: 1
-      # iceoryx2 user-header type name. Leave empty to use the bridge's default contract
-      # name, or set it to match your publisher's header type name (so the bridge can
-      # attach to publishers that use a different header name without code changes).
+      # Whether each sample carries an Iox2MessageHeader. When true (default), the header
+      # locates the FlatBuffer within the slot and supplies the publisher's timestamp. When
+      # false, the entire payload slice is treated as the FlatBuffer and the bridge's receive
+      # time is used as the log time. The header path is a stopgap and is expected to be
+      # retired once iceoryx2 ships first-class FlatBuffer support.
+      use_message_header: true
+      # iceoryx2 user-header type name (header mode only; ignored when use_message_header is
+      # false). Leave empty to use the bridge's default contract name, or set it to match your
+      # publisher's header type name (so the bridge can attach to publishers that use a
+      # different header name without code changes). Must be <= 255 characters; the header's
+      # size and alignment must also match the publisher's, not just the name.
       user_header_type_name: ""
       # iox2 publish-subscribe service names to subscribe to.
       service_names: ["/livox/points"]

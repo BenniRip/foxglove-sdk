@@ -18,15 +18,27 @@ iox2 publish-subscribe subscribers, creates `RawChannel`s on the bridge's `_serv
 (encoding `flatbuffer`, schema from a `.bfbs` file), polls the subscribers on a ROS timer,
 and logs each payload. The ROS source path is untouched.
 
-iox2 keys services on exact type identity, so the source uses a user header to locate the
-FlatBuffer and carry a publisher-side wall-clock timestamp (so the bridge never parses the
-payload). That header, `foxglove_bridge::Iox2MessageHeader`, is defined **inside this
-package** (`include/foxglove_bridge/iox2_message_header.hpp`) with no external/vendor
+### Message header (and how to turn it off)
+
+By default the source uses an iox2 **user header** to locate the FlatBuffer within the
+shared-memory slot and to carry a publisher-side wall-clock timestamp, so the bridge never
+parses the payload. That header, `foxglove_bridge::Iox2MessageHeader`, is defined **inside
+this package** (`include/foxglove_bridge/iox2_message_header.hpp`) with no external/vendor
 dependency, so the source stays upstreamable.
 
-This makes the header the bridge's own wire contract: any publisher that feeds this bridge
-must publish a `Slice<uint8_t>` payload with a user header of this exact layout **and a
-matching iceoryx2 type name**.
+This makes the header the bridge's own wire contract: in header mode any publisher that feeds
+this bridge must publish a `Slice<uint8_t>` payload with a user header of this exact layout
+**and a matching iceoryx2 type name**.
+
+> **The header is a stopgap.** It exists only because today's iceoryx2 has no first-class
+> notion of a FlatBuffer payload. Set `iox2.use_message_header: false` to run **headerless**:
+> the source subscribes with iox2's default (`void`) user header, treats the **entire payload
+> slice** as the FlatBuffer, and uses the bridge's receive time as the log time (there is no
+> publisher timestamp without the header). This is the path to switch to once iceoryx2 ships
+> first-class FlatBuffer support and the `Iox2MessageHeader` contract can be retired. Header
+> and headerless services cannot be mixed in one bridge instance — the toggle is global.
+
+#### Matching the publisher's header type (header mode)
 
 iceoryx2 matches on a type-name *string*, not on the C++ type, so the user-header type name
 is **runtime-configurable**. The bridge resolves it via an `IOX2_DEFINE_TYPE_NAME`
@@ -34,8 +46,18 @@ specialization that calls `iox2UserHeaderTypeName()`, which the `iox2.user_heade
 parameter sets at startup. Leave the parameter empty to use the default contract name
 (`foxglove_bridge::Iox2MessageHeader`), or set it to whatever iceoryx2 type name your
 publisher uses for its header. This lets the bridge attach to publishers that use a
-differently-named header type (e.g. a vendor `MsgHeader`) without any code change; only the
-header layout must match.
+differently-named header type (e.g. a vendor `MsgHeader`) without any code change.
+
+Two caveats on the match:
+
+* **Name alone is not enough.** iceoryx2's type identity is `{size, alignment, type_name}`.
+  The override only fixes the *name*; `sizeof`/`alignof` of `Iox2MessageHeader` (24 bytes,
+  8-byte aligned) must also equal the publisher's header. Note that iceoryx2 does *not* check
+  the field layout — two headers with the same size/alignment/name but different field
+  meanings would be accepted and produce garbage, so keep the struct in sync deliberately.
+* **Length limit.** iceoryx2 caps type names at 255 characters and truncates silently beyond
+  that, which would then fail to match for a non-obvious reason. Keep
+  `user_header_type_name` within 255 characters.
 
 ## Building
 
@@ -48,7 +70,9 @@ Requirements when `ON`:
 
 * `iceoryx2-cxx` (the iox2 C++ bindings) available to CMake.
 * `.bfbs` schema files for the bridged topics.
-* Publishers that emit `Slice<uint8_t>` + an `Iox2MessageHeader`-compatible user header.
+* Publishers that emit a `Slice<uint8_t>` payload — with an `Iox2MessageHeader`-compatible
+  user header in the default header mode, or a bare FlatBuffer slice when
+  `iox2.use_message_header` is `false`.
 
 Export `FOXGLOVE_BRIDGE_WITH_IOX2=ON` in the environment so colcon orders the optional
 `package.xml` dependencies before the build:
@@ -63,9 +87,9 @@ Notes:
   C++17 (the bridge's baseline, built with `-Wpedantic -Werror`). iceoryx2-cxx defaults to
   C++17 and propagates its standard via PUBLIC compile features, so CMake raises the
   component's standard automatically if a given iceoryx2-cxx build requires more.
-* This is a maintained Gravis patch on upstream. Keep it minimal (one source file, one
-  CMake option, a guarded include/member, and one guarded construction in the bridge
-  constructor) so it rebases cleanly.
+* This is a maintained Gravis patch on upstream. Keep it minimal (one source file plus its
+  guarded headers, one CMake option, a guarded member, and one guarded construction in the
+  bridge constructor) so it rebases cleanly.
 
 ## Configuring
 
@@ -76,7 +100,8 @@ iox2 services are configured via ROS parameters under the `iox2.` prefix. See
 | :-- | :-- | :-- |
 | `iox2.schema_dir` | string | Directory holding the `.bfbs` schema files |
 | `iox2.poll_interval_ms` | int | Subscriber poll period (default 1) |
-| `iox2.user_header_type_name` | string | Override the iceoryx2 user-header type name to match the publisher (empty = default contract name) |
+| `iox2.use_message_header` | bool | `true` (default): read an `Iox2MessageHeader` per sample; `false`: whole payload is the FlatBuffer, log time is the bridge's receive time |
+| `iox2.user_header_type_name` | string | Header mode only: override the iceoryx2 user-header type name to match the publisher (empty = default contract name, ≤ 255 chars) |
 | `iox2.service_names` | string[] | iox2 services to subscribe to |
 | `iox2.topics` | string[] | Foxglove topics to advertise (parallel to services) |
 | `iox2.schema_names` | string[] | Foxglove schema names (parallel) |
