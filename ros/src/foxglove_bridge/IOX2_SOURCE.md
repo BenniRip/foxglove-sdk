@@ -34,9 +34,8 @@ this bridge must publish a `Slice<uint8_t>` payload with a user header of this e
 > notion of a FlatBuffer payload. Set `iox2.use_message_header: false` to run **headerless**:
 > the source subscribes with iox2's default (`void`) user header, treats the **entire payload
 > slice** as the FlatBuffer, and uses the bridge's receive time as the log time (there is no
-> publisher timestamp without the header). This is the path to switch to once iceoryx2 ships
-> first-class FlatBuffer support and the `Iox2MessageHeader` contract can be retired. Header
-> and headerless services cannot be mixed in one bridge instance — the toggle is global.
+> publisher timestamp without the header). See the roadmap section at the end. Header and
+> headerless services cannot be mixed in one bridge instance — the toggle is global.
 
 #### Matching the publisher's header type (header mode)
 
@@ -46,19 +45,20 @@ the C++ type (`"__cxx__abi__" + typeid(T).name()`). `Iox2MessageHeader` carries 
 `IOX2_TYPE_NAME` member so the bridge's subscriber can match a publisher whose C++ header type
 has a different name, without depending on the publisher's package.
 
-The name is a **build-time** setting (not a ROS parameter, because the iceoryx2 version this
-bridge targets resolves it at compile time). It defaults to `foxglove_bridge::Iox2MessageHeader`;
-override it to match the publisher:
+The name is a **build-time** setting (not a ROS parameter, because the typed C++ bindings
+resolve it at compile time). It defaults to `foxglove_bridge::Iox2MessageHeader`; override it
+to match the publisher:
 
 ```bash
 colcon build --packages-select foxglove_bridge --cmake-args \
   -DFOXGLOVE_BRIDGE_WITH_IOX2=ON \
-  -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=__cxx__abi__N6gravis11iox2_common9MsgHeaderE
+  -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=gravis::iox2_common::MsgHeader
 ```
 
-(That example value is what iceoryx2 derives for a publisher using
-`gravis::iox2_common::MsgHeader` with no `IOX2_TYPE_NAME` member — i.e.
-`__cxx__abi__` + `typeid(gravis::iox2_common::MsgHeader).name()`.)
+The recommended setup is for the *publisher's* header type to carry its own readable
+`IOX2_TYPE_NAME` (as above) and to pass the same string here. Without one, iceoryx2 derives a
+compiler-specific mangled name (e.g. `__cxx__abi__N6gravis11iox2_common9MsgHeaderE`) that
+would have to be matched verbatim — fragile and ABI-dependent; avoid it.
 
 Two caveats on the match:
 
@@ -67,6 +67,8 @@ Two caveats on the match:
   8-byte aligned) must also equal the publisher's header. Note that iceoryx2 does *not* check
   the field layout — two headers with the same size/alignment/name but different field
   meanings would be accepted and produce garbage, so keep the struct in sync deliberately.
+  When the service already exists at startup, the source validates the registered identity
+  against the compiled-in one and logs an error naming both sides on a mismatch.
 * **Length limit.** iceoryx2 caps type names at 255 characters and truncates silently beyond
   that, which would then fail to match for a non-obvious reason. Keep the name within 255
   characters.
@@ -125,3 +127,17 @@ iox2 services are configured via ROS parameters under the `iox2.` prefix. See
 * No MCAP recording from the iox2 source (the upstream bridge does not record).
 * TF is not specially forwarded: the ROS bridge already carries `/tf` and `/tf_static` as
   ROS topics, which Foxglove understands natively.
+
+## Roadmap: retiring the header contract
+
+The `Iox2MessageHeader` exists only to *frame* the FlatBuffer (`rootOffset`, `payloadSize`)
+and to carry a log timestamp. Once iceoryx2 ships **first-class FlatBuffer payloads** (the
+transport itself knowing where the buffer starts and how long it is), the bridge no longer
+needs to read any header content and `iox2.use_message_header: false` becomes the default
+mode; the header contract then disappears from the bridge, and user headers become a
+publisher/consumer concern the bridge is indifferent to. Matching a publisher's header
+*identity* without compiling it in is also possible before that (iceoryx2's service discovery
+exposes the registered `{name, size, alignment}`, and its C API accepts type details as
+runtime values), but it is deliberately not implemented here: it would roughly double this
+patch for flexibility that a source-built bridge does not need, since any header change
+forces a coordinated publisher rebuild anyway.

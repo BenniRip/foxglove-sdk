@@ -22,7 +22,9 @@
       # It defaults to the bridge's own contract name; override it to match your publisher with
       #   -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=<name>
       # at build time (the header's size/alignment must match the publisher's too, not just the
-      # name; must be <= 255 characters).
+      # name; must be <= 255 characters). Give the publisher's header type a readable
+      # IOX2_TYPE_NAME member and pass the same string here; matching the compiler-derived
+      # mangled name works but is fragile and ABI-specific.
       # iox2 publish-subscribe service names to subscribe to.
       service_names: ["/livox/points"]
       # Foxglove topic names to advertise (usually mirrors service_names).

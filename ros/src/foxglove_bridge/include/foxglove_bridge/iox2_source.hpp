@@ -60,7 +60,9 @@ struct Iox2Subscription {
 ///       is used. The header path is a stopgap and is expected to be retired once iceoryx2
 ///       ships first-class FlatBuffer support.
 /// The iceoryx2 user-header type name is a build-time setting (Iox2MessageHeader::IOX2_TYPE_NAME,
-/// overridable via -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=...), not a ROS parameter.
+/// overridable via -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=...), not a ROS parameter. When a
+/// configured service already exists at startup, its registered header identity is validated
+/// against the compiled-in one and a mismatch is reported naming both sides.
 /// An empty service_names list disables the source (no-op).
 class Iox2Source {
 public:

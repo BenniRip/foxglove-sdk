@@ -27,6 +27,32 @@ std::string loadBinaryFile(const std::filesystem::path& path) {
   return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
+/// User-header identity of a running service, as registered by its creator. This is the
+/// complete type description iceoryx2 stores ({name, size, alignment}); there is no
+/// field-level layout information anywhere.
+struct DiscoveredHeader {
+  std::string typeName;
+  std::size_t size = 0;
+  std::size_t alignment = 0;
+};
+
+/// Looks up the user-header identity of an existing iox2 publish-subscribe service. Returns
+/// nullopt while the service does not exist yet (the publisher creates it).
+std::optional<DiscoveredHeader> discoverUserHeader(const std::string& serviceName) {
+  auto name = iox2::ServiceName::create(serviceName.c_str());
+  if (!name.has_value()) {
+    return std::nullopt;
+  }
+  auto details = iox2::Service<iox2::ServiceType::Ipc>::details(
+    name.value(), iox2::Config::global_config(), iox2::MessagingPattern::PublishSubscribe);
+  if (!details.has_value() || !details.value().has_value()) {
+    return std::nullopt;
+  }
+  const auto header =
+    details.value().value().static_details.publish_subscribe().message_type_details().user_header();
+  return DiscoveredHeader{header.type_name(), header.size(), header.alignment()};
+}
+
 /// Concrete iox2 subscription. Templated on the iceoryx2 user-header type and on whether that
 /// header is used to locate the FlatBuffer:
 ///   - UseHeader == true  (UserHeaderT == Iox2MessageHeader): the header gives the FlatBuffer's
@@ -226,10 +252,30 @@ void Iox2Source::setupSubscribers(const foxglove::Context& context,
                                "': " + foxglove::strerror(channelResult.error()));
     }
 
+    // If the service already exists, validate the compiled-in header identity against its
+    // registered one first: the typed open below would fail on the same mismatch, but with
+    // an error that names neither side.
+    if (useHeader_) {
+      if (const auto discovered = discoverUserHeader(cfg.serviceName)) {
+        if (discovered->typeName != Iox2MessageHeader::IOX2_TYPE_NAME ||
+            discovered->size != sizeof(Iox2MessageHeader) ||
+            discovered->alignment != alignof(Iox2MessageHeader)) {
+          RCLCPP_ERROR(node_.get_logger(),
+                       "iox2 source: '%s': publisher user header is '%s' (%zu bytes, align %zu) "
+                       "but this bridge was built for '%s' (%zu bytes, align %zu); skipping this "
+                       "service. Rebuild with a matching "
+                       "-DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME.",
+                       cfg.serviceName.c_str(), discovered->typeName.c_str(), discovered->size,
+                       discovered->alignment, Iox2MessageHeader::IOX2_TYPE_NAME,
+                       sizeof(Iox2MessageHeader), alignof(Iox2MessageHeader));
+          continue;
+        }
+      }
+    }
+
     auto subscription =
-      useHeader_
-        ? openSubscription<Iox2MessageHeader, true>(*iox2Node_, cfg.serviceName, cfg.topic)
-        : openSubscription<void, false>(*iox2Node_, cfg.serviceName, cfg.topic);
+      useHeader_ ? openSubscription<Iox2MessageHeader, true>(*iox2Node_, cfg.serviceName, cfg.topic)
+                 : openSubscription<void, false>(*iox2Node_, cfg.serviceName, cfg.topic);
 
     entries_.push_back(Entry{std::move(channelResult.value()), std::move(subscription)});
 
