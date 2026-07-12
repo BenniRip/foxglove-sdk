@@ -1,0 +1,36 @@
+# Example parameters for the optional iceoryx2 source (FOXGLOVE_BRIDGE_WITH_IOX2=ON).
+#
+# Load alongside the bridge, e.g.:
+#   ros2 run foxglove_bridge foxglove_bridge --ros-args --params-file iox2_services.example.yaml
+#
+# Each index across the four parallel arrays defines one bridged service. An empty
+# service_names list leaves the iox2 source inert (the bridge then serves only ROS data).
+/**:
+  ros__parameters:
+    iox2:
+      # Directory containing the .bfbs (binary FlatBuffer) schema files. Transitional, like
+      # the message header: see the future-work section in IOX2_SOURCE.md.
+      schema_dir: "/path/to/bfbs"
+      # Subscriber poll period in milliseconds.
+      poll_interval_ms: 1
+      # Whether each sample carries an Iox2MessageHeader. When true (default), the header
+      # locates the FlatBuffer within the slot and supplies the publisher's timestamp. When
+      # false, the entire payload slice is treated as the FlatBuffer and the bridge's receive
+      # time is used as the log time. The header path is a stopgap and is expected to be
+      # retired once iceoryx2 ships first-class FlatBuffer support.
+      use_message_header: true
+      # NOTE: the iceoryx2 user-header *type name* is a build-time setting, not a parameter.
+      # It defaults to the bridge's own contract name; override it to match your publisher with
+      #   -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=<name>
+      # at build time (the header's size/alignment must match the publisher's too, not just the
+      # name; must be <= 255 characters). Give the publisher's header type a readable
+      # IOX2_TYPE_NAME member and pass the same string here; matching the compiler-derived
+      # mangled name works but is fragile and ABI-specific.
+      # iox2 publish-subscribe service names to subscribe to.
+      service_names: ["/lidar/points"]
+      # Foxglove topic names to advertise (usually mirrors service_names).
+      topics: ["/lidar/points"]
+      # Foxglove schema names (well-known foxglove.* schemas recommended).
+      schema_names: ["foxglove.PointCloud"]
+      # .bfbs file (relative to schema_dir) describing each topic's payload.
+      bfbs_files: ["PointCloud.bfbs"]
