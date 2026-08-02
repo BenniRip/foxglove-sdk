@@ -41,6 +41,11 @@
     <depend>rosidl_typesupport_introspection_cpp</depend>
     <depend>std_msgs</depend>
 
+    <!-- Optional iceoryx2 source, built only with -DFOXGLOVE_BRIDGE_WITH_IOX2=ON.
+         Export FOXGLOVE_BRIDGE_WITH_IOX2=ON so colcon orders this dep before the build.
+         The wire contract (user header) is defined in-package, so there is no vendor dep. -->
+    <depend condition="$FOXGLOVE_BRIDGE_WITH_IOX2 == 'ON'">iceoryx2-cxx</depend>
+
     <!-- The export tag contains other, unspecified, tags -->
     <export>
         <build_type>ament_cmake</build_type>

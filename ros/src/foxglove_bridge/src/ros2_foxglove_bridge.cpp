@@ -436,6 +436,17 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
 
   _rosgraphPollThread =
     std::make_unique<std::thread>(std::bind(&FoxgloveBridge::rosgraphPollThread, this));
+
+#ifdef FOXGLOVE_BRIDGE_WITH_IOX2
+  // Optional: bridge configured iceoryx2 services onto the same server context, so iox2
+  // and ROS data are served over one WebSocket. A failure here must not take down the
+  // ROS bridge, so it is contained.
+  try {
+    _iox2Source = std::make_unique<Iox2Source>(*this, _serverContext);
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to initialize iox2 source: %s", e.what());
+  }
+#endif
 }
 
 FoxgloveBridge::~FoxgloveBridge() {
