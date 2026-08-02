@@ -8,25 +8,15 @@
 /**:
   ros__parameters:
     iox2:
-      # Directory containing the .bfbs (binary FlatBuffer) schema files. Transitional, like
-      # the message header: see the future-work section in IOX2_SOURCE.md.
+      # Directory containing the .bfbs (binary FlatBuffer) schema files. Each file is both
+      # the Foxglove channel schema and the schema registered with the iceoryx2 service, so
+      # publishers must register the same file (byte-identical content).
       schema_dir: "/path/to/bfbs"
       # Subscriber poll period in milliseconds.
       poll_interval_ms: 1
-      # Whether each sample carries an Iox2MessageHeader. When true (default), the header
-      # locates the FlatBuffer within the slot and supplies the publisher's timestamp. When
-      # false, the entire payload slice is treated as the FlatBuffer and the bridge's receive
-      # time is used as the log time. The header path is a stopgap and is expected to be
-      # retired once iceoryx2 ships first-class FlatBuffer support.
-      use_message_header: true
-      # NOTE: the iceoryx2 user-header *type name* is a build-time setting, not a parameter.
-      # It defaults to the bridge's own contract name; override it to match your publisher with
-      #   -DFOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME=<name>
-      # at build time (the header's size/alignment must match the publisher's too, not just the
-      # name; must be <= 255 characters). Give the publisher's header type a readable
-      # IOX2_TYPE_NAME member and pass the same string here; matching the compiler-derived
-      # mangled name works but is fragile and ABI-specific.
-      # iox2 publish-subscribe service names to subscribe to.
+      # iox2 publish-subscribe service names to subscribe to. Services must carry iceoryx2's
+      # native FlatBuffer payloads (iox2::Flatbuffer<T>); there is no bridge-specific wire
+      # contract (no user header, no framing).
       service_names: ["/lidar/points"]
       # Foxglove topic names to advertise (usually mirrors service_names).
       topics: ["/lidar/points"]

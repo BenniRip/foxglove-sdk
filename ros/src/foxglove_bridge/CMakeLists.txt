@@ -60,8 +60,9 @@ if(FOXGLOVE_BRIDGE_REMOTE_ACCESS AND _glibc_too_old)
 endif()
 
 # Optional iceoryx2 source. When ON, an iceoryx2 source is compiled into the bridge so iox2 and ROS data are served over one
-# WebSocket. Requires iceoryx2-cxx in the build environment; the wire contract (user
-# header) is defined in-package, so there is no vendor dependency. When OFF (default),
+# WebSocket. Requires iceoryx2-cxx (built with IOX2_FEATURE_FLATBUFFERS=ON) in the build
+# environment; the source subscribes to iceoryx2's native FlatBuffer payloads, so there is
+# no bridge-specific wire contract and no vendor dependency. When OFF (default),
 # the bridge is the unmodified upstream ROS 2 bridge with no iox2 dependency.
 option(FOXGLOVE_BRIDGE_WITH_IOX2 "Build with the optional iceoryx2 source" OFF)
 
@@ -208,19 +209,12 @@ target_link_libraries(foxglove_bridge_component
 )
 
 if(FOXGLOVE_BRIDGE_WITH_IOX2)
-  # iceoryx2-cxx provides the iox2 C++ bindings. The wire contract (the user-header struct)
-  # is defined inside this package (foxglove_bridge/iox2_message_header.hpp), so there is no
-  # dependency on any external/vendor package and the source stays upstreamable.
+  # iceoryx2-cxx provides the iox2 C++ bindings; it must be built with
+  # IOX2_FEATURE_FLATBUFFERS=ON (the source subscribes to native FlatBuffer payloads and
+  # there is no bridge-specific wire contract).
   find_package(iceoryx2-cxx REQUIRED)
   target_sources(foxglove_bridge_component PRIVATE src/iox2_source.cpp)
   target_compile_definitions(foxglove_bridge_component PUBLIC FOXGLOVE_BRIDGE_WITH_IOX2)
-  # Optional override of the iceoryx2 user-header type name (Iox2MessageHeader::IOX2_TYPE_NAME),
-  # to match a publisher whose header uses a different iceoryx2 type name. CMake handles quoting
-  # the string into the compile definition. Leave unset to use the default contract name.
-  if(FOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME)
-    target_compile_definitions(foxglove_bridge_component PRIVATE
-      FOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME="${FOXGLOVE_BRIDGE_IOX2_HEADER_TYPE_NAME}")
-  endif()
   # iceoryx2-cxx propagates its required C++ standard via PUBLIC compile features (cxx_std_17 by default)
   target_link_libraries(foxglove_bridge_component
     iceoryx2-cxx::static-lib-cxx
