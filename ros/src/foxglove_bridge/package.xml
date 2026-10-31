@@ -45,6 +45,9 @@
     <depend>rosidl_typesupport_introspection_cpp</depend>
     <depend>std_msgs</depend>
 
+    <!-- Export FOXGLOVE_BRIDGE_WITH_IOX2=ON so colcon builds this dependency first. -->
+    <depend condition="$FOXGLOVE_BRIDGE_WITH_IOX2 == 'ON'">iceoryx2-cxx</depend>
+
     <!-- The export tag contains other, unspecified, tags -->
     <export>
         <build_type>ament_cmake</build_type>

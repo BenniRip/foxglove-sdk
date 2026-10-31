@@ -472,6 +472,15 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
 
   _rosgraphPollThread =
     std::make_unique<std::thread>(std::bind(&FoxgloveBridge::rosgraphPollThread, this));
+
+#ifdef FOXGLOVE_BRIDGE_WITH_IOX2
+  // An iox2 failure must not take down the ROS bridge.
+  try {
+    _iox2Source = std::make_unique<Iox2Source>(*this, _serverContext);
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to initialize iox2 source: %s", e.what());
+  }
+#endif
 }
 
 FoxgloveBridge::~FoxgloveBridge() {
