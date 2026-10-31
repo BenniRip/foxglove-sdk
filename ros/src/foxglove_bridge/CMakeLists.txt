@@ -59,6 +59,10 @@ if(FOXGLOVE_BRIDGE_REMOTE_ACCESS AND _glibc_too_old)
   message(WARNING "FOXGLOVE_BRIDGE_REMOTE_ACCESS=ON but build host has glibc ${_glibc_version} (< 2.35); the link step is likely to fail.")
 endif()
 
+# Serves iceoryx2 FlatBuffer services alongside ROS data. Requires iceoryx2-cxx built with
+# IOX2_FEATURE_FLATBUFFERS=ON. See IOX2_SOURCE.md.
+option(FOXGLOVE_BRIDGE_WITH_IOX2 "Build with the optional iceoryx2 source" OFF)
+
 macro(enable_strict_compiler_warnings target)
   if (MSVC)
     target_compile_options(${target} PRIVATE /WX /W4)
@@ -200,6 +204,15 @@ target_link_libraries(foxglove_bridge_component
   rosidl_typesupport_introspection_cpp::rosidl_typesupport_introspection_cpp
   rosx_introspection::rosx_introspection
 )
+
+if(FOXGLOVE_BRIDGE_WITH_IOX2)
+  find_package(iceoryx2-cxx REQUIRED)
+  target_sources(foxglove_bridge_component PRIVATE src/iox2_source.cpp)
+  target_compile_definitions(foxglove_bridge_component PUBLIC FOXGLOVE_BRIDGE_WITH_IOX2)
+  target_link_libraries(foxglove_bridge_component
+    iceoryx2-cxx::static-lib-cxx
+  )
+endif()
 
 rclcpp_components_register_nodes(foxglove_bridge_component "foxglove_bridge::FoxgloveBridge")
 enable_strict_compiler_warnings(foxglove_bridge_component)
