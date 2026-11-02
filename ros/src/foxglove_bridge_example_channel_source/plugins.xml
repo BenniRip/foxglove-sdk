@@ -1,0 +1,6 @@
+<library path="foxglove_bridge_example_channel_source">
+  <class type="foxglove_bridge_example_channel_source::ExampleChannelSource"
+         base_class_type="foxglove_bridge::ChannelSourcePlugin">
+    <description>Example: serves a JSON counter while a client is subscribed.</description>
+  </class>
+</library>

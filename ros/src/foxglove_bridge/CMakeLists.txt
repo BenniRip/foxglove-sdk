@@ -210,25 +210,28 @@ set_target_properties(foxglove_bridge_component PROPERTIES
   BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-# Out-of-tree ChannelSourcePlugin implementations link this target. It provides the plugin
-# interface and the bridge's own copy of the SDK (headers and foxglove_cpp_shared), which plugins
-# must share with the bridge rather than bundle their own.
-add_library(foxglove_bridge_plugin_api INTERFACE)
-target_include_directories(foxglove_bridge_plugin_api INTERFACE
+# Out-of-tree ChannelSourcePlugin implementations link foxglove_bridge::plugin_api. It provides
+# the plugin interface and the bridge's own copy of the SDK (headers and foxglove_cpp_shared),
+# which plugins must share with the bridge rather than bundle their own.
+add_library(plugin_api INTERFACE)
+target_include_directories(plugin_api INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
-target_link_libraries(foxglove_bridge_plugin_api INTERFACE
+target_link_libraries(plugin_api INTERFACE
   foxglove_cpp_shared
   rclcpp::rclcpp
 )
-# foxglove_cpp_shared points at the SDK headers in the build tree; installed consumers find the
-# copy installed below instead.
+# The SDK helper points foxglove_cpp_shared at the SDK headers in the build tree. Keep those for
+# in-tree use and add the copy installed below for installed consumers.
+get_target_property(_foxglove_sdk_include_dirs foxglove_cpp_shared INTERFACE_INCLUDE_DIRECTORIES)
+set(_foxglove_sdk_interface_include_dirs "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
+foreach(_dir IN LISTS _foxglove_sdk_include_dirs)
+  list(APPEND _foxglove_sdk_interface_include_dirs "$<BUILD_INTERFACE:${_dir}>")
+endforeach()
 set_target_properties(foxglove_cpp_shared PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES
-    "$<BUILD_INTERFACE:${FOXGLOVE_SDK_INCLUDE_DIRS}>;$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
-  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
-    "$<BUILD_INTERFACE:${FOXGLOVE_SDK_INCLUDE_DIRS}>;$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
+  INTERFACE_INCLUDE_DIRECTORIES "${_foxglove_sdk_interface_include_dirs}"
+  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_foxglove_sdk_interface_include_dirs}"
 )
 
 add_executable(foxglove_bridge
@@ -280,11 +283,11 @@ if(BUILD_TESTING)
   target_link_libraries(message_definition_cache_test foxglove_bridge_component)
   enable_strict_compiler_warnings(message_definition_cache_test)
 
-  # Test plugins are built like an out-of-tree plugin (against foxglove_bridge_plugin_api) and
+  # Test plugins are built like an out-of-tree plugin (against plugin_api) and
   # mock-installed under a separate package name, so the bridge loads them through pluginlib.
   add_library(foxglove_bridge_test_plugins SHARED tests/channel_source_plugin/test_plugins.cpp)
   target_link_libraries(foxglove_bridge_test_plugins
-    foxglove_bridge_plugin_api
+    plugin_api
     pluginlib::pluginlib
   )
   enable_strict_compiler_warnings(foxglove_bridge_test_plugins)
@@ -316,6 +319,7 @@ install(FILES include/foxglove_bridge/ros2_foxglove_bridge.hpp
   DESTINATION include/${PROJECT_NAME}/
 )
 install(TARGETS foxglove_bridge_component
+  EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -323,7 +327,7 @@ install(TARGETS foxglove_bridge_component
 # Install the SDK shared library alongside the bridge component library so the
 # runtime linker can find it via RPATH ($ORIGIN). Not needed when remote access
 # is disabled, since the SDK is statically linked into foxglove_cpp_shared.
-install(TARGETS foxglove_cpp_shared foxglove_bridge_plugin_api
+install(TARGETS foxglove_cpp_shared plugin_api
   EXPORT export_${PROJECT_NAME}
   LIBRARY DESTINATION lib
 )
@@ -339,14 +343,26 @@ install(DIRECTORY launch
 install(FILES include/foxglove_bridge/utils.hpp
   DESTINATION include/${PROJECT_NAME}/
 )
-# Headers for out-of-tree channel source plugins, found through foxglove_bridge_plugin_api.
+# Headers for out-of-tree channel source plugins, found through plugin_api.
 install(FILES include/foxglove_bridge/channel_source_plugin.hpp
   DESTINATION include/${PROJECT_NAME}/foxglove_bridge/
 )
 install(DIRECTORY ${FOXGLOVE_SDK_INCLUDE_DIRS}/
   DESTINATION include/${PROJECT_NAME}/
 )
-ament_export_libraries(foxglove_bridge_component)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(pluginlib rclcpp)
+ament_export_dependencies(
+  ament_index_cpp
+  pluginlib
+  rcl_interfaces
+  rclcpp
+  rclcpp_components
+  rcpputils
+  rcutils
+  resource_retriever
+  rosgraph_msgs
+  rosidl_typesupport_introspection_cpp
+  rosx_introspection
+  std_msgs
+)
 ament_package()

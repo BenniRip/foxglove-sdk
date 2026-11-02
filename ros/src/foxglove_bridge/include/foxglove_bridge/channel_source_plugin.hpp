@@ -23,9 +23,12 @@ constexpr int CHANNEL_SOURCE_PLUGIN_API_VERSION = 1;
 /// currently subscribed to a channel. The bridge ignores subscriptions to channels that are not
 /// its own ROS channels, so plugins need not register theirs.
 ///
+/// The bridge does not check plugin topics against ROS topic names; plugins must avoid collisions.
+/// Plugins run inside the bridge process, so a crash in a plugin takes the bridge down.
+///
 /// Plugins must be built against the same foxglove_bridge version they are loaded into: they
 /// share the bridge's copy of the Foxglove SDK, which they link through the exported
-/// `foxglove_bridge::foxglove_bridge_plugin_api` CMake target.
+/// `foxglove_bridge::plugin_api` CMake target.
 class ChannelSourcePlugin {
 public:
   virtual ~ChannelSourcePlugin() = default;

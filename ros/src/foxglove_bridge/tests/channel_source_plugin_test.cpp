@@ -29,29 +29,60 @@ constexpr char WRONG_VERSION_PLUGIN_TOPIC[] = "/wrong_version/data";
 constexpr auto DEFAULT_TIMEOUT = std::chrono::seconds(10);
 // smoke_test uses 8765.
 constexpr int64_t PORT = 8766;
+constexpr int64_t SHUTDOWN_TEST_PORT = 8767;
 const std::string URI = "ws://localhost:" + std::to_string(PORT);
+constexpr char SYSINFO_TOPIC[] = "/foxglove_bridge/sysinfo";
 
-std::mutex g_errorLogsMutex;
+std::mutex g_logsMutex;
 std::vector<std::string> g_errorLogs;
+std::vector<std::string> g_infoLogs;
 rcutils_logging_output_handler_t g_defaultLogHandler = nullptr;
 
-void captureErrorLogs(const rcutils_log_location_t* location, int severity, const char* name,
-                      rcutils_time_point_value_t timestamp, const char* format, va_list* args) {
-  if (severity >= RCUTILS_LOG_SEVERITY_ERROR) {
+void captureLogs(const rcutils_log_location_t* location, int severity, const char* name,
+                 rcutils_time_point_value_t timestamp, const char* format, va_list* args) {
+  if (severity >= RCUTILS_LOG_SEVERITY_INFO) {
     va_list argsCopy;
     va_copy(argsCopy, *args);
     char buffer[1024];
     std::vsnprintf(buffer, sizeof(buffer), format, argsCopy);
     va_end(argsCopy);
-    std::lock_guard<std::mutex> lock(g_errorLogsMutex);
-    g_errorLogs.emplace_back(buffer);
+    std::lock_guard<std::mutex> lock(g_logsMutex);
+    (severity >= RCUTILS_LOG_SEVERITY_ERROR ? g_errorLogs : g_infoLogs).emplace_back(buffer);
   }
   g_defaultLogHandler(location, severity, name, timestamp, format, args);
 }
 
 std::vector<std::string> takeErrorLogs() {
-  std::lock_guard<std::mutex> lock(g_errorLogsMutex);
+  std::lock_guard<std::mutex> lock(g_logsMutex);
   return std::exchange(g_errorLogs, {});
+}
+
+bool infoLogged(const std::string& text) {
+  std::lock_guard<std::mutex> lock(g_logsMutex);
+  for (const auto& log : g_infoLogs) {
+    if (log.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Subscribes to and unsubscribes from a topic's channel, and returns the errors logged meanwhile.
+std::vector<std::string> errorsWhileSubscribing(const std::string& topic) {
+  foxglove::test::Client<websocketpp::config::asio_client> client;
+  auto channelFuture = client.waitForChannel(topic);
+  if (client.connect(URI).wait_for(DEFAULT_TIMEOUT) != std::future_status::ready ||
+      channelFuture.wait_for(DEFAULT_TIMEOUT) != std::future_status::ready) {
+    return {"could not find channel for " + topic};
+  }
+  const auto channel = channelFuture.get();
+  takeErrorLogs();
+  client.subscribe({{1, channel.id}});
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  client.unsubscribe({1});
+  // Subscriptions are handled asynchronously; give the bridge time to process them.
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  return takeErrorLogs();
 }
 
 }  // namespace
@@ -95,6 +126,29 @@ TEST(ChannelSourcePluginTest, subscribingToPluginChannelLogsNoErrors) {
   EXPECT_TRUE(errors.empty()) << "first unexpected error: " << errors.front();
 }
 
+TEST(ChannelSourcePluginTest, subscribingToSystemInfoChannelLogsNoErrors) {
+  // Like plugin channels, the system info channel is served by the server context without a ROS
+  // subscription; the bridge used to log an "unknown channel" error for it.
+  const auto errors = errorsWhileSubscribing(SYSINFO_TOPIC);
+  EXPECT_TRUE(errors.empty()) << "first unexpected error: " << errors.front();
+}
+
+TEST(ChannelSourcePluginTest, pluginsAreShutDownWithTheBridge) {
+  rclcpp::NodeOptions nodeOptions;
+  nodeOptions.arguments({"--ros-args", "-r", "__node:=shutdown_test_bridge"});
+  nodeOptions.append_parameter_override(foxglove_bridge::PARAM_PORT, SHUTDOWN_TEST_PORT);
+  nodeOptions.append_parameter_override(foxglove_bridge::PARAM_SYSINFO, false);
+  nodeOptions.append_parameter_override(foxglove_bridge::PARAM_CHANNEL_SOURCE_PLUGINS,
+                                        std::vector<std::string>({"shutdown_probe"}));
+  nodeOptions.append_parameter_override("shutdown_probe.plugin",
+                                        "foxglove_bridge_test_plugins::TestChannelSourcePlugin");
+  {
+    foxglove_bridge::FoxgloveBridge bridge(nodeOptions);
+    EXPECT_FALSE(infoLogged("Test plugin instance 'shutdown_probe' shut down"));
+  }
+  EXPECT_TRUE(infoLogged("Test plugin instance 'shutdown_probe' shut down"));
+}
+
 TEST(ChannelSourcePluginTest, instancesOfTheSamePluginLoadSideBySide) {
   foxglove::test::Client<websocketpp::config::asio_client> client;
   auto channelFuture = client.waitForChannel(SECOND_INSTANCE_TOPIC);
@@ -135,7 +189,7 @@ int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
 
   g_defaultLogHandler = rcutils_logging_get_output_handler();
-  rcutils_logging_set_output_handler(captureErrorLogs);
+  rcutils_logging_set_output_handler(captureLogs);
 
   int testResult = 0;
   {

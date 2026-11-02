@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <unordered_set>
 
+#include <pluginlib/class_loader.hpp>
 #include <rclcpp/version.h>
 #include <resource_retriever/retriever.hpp>
 

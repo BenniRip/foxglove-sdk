@@ -13,7 +13,6 @@
 #include <unordered_set>
 #include <variant>
 
-#include <pluginlib/class_loader.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rmw/types.h>
 #include <rosgraph_msgs/msg/clock.hpp>
@@ -34,6 +33,12 @@
 #include <foxglove_bridge/param_utils.hpp>
 #include <foxglove_bridge/parameter_interface.hpp>
 #include <foxglove_bridge/utils.hpp>
+
+namespace pluginlib {
+// Declared rather than included, so that including this header does not require pluginlib.
+template <class T>
+class ClassLoader;
+}  // namespace pluginlib
 
 namespace foxglove_bridge {
 

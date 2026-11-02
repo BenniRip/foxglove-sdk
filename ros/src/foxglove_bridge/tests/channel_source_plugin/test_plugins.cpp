@@ -35,6 +35,8 @@ public:
                                foxglove::strerror(channel.error()));
     }
     _channel.emplace(std::move(channel.value()));
+    _name = name;
+    _logger = node.get_logger().get_child(name);
 
     _timer = node.create_wall_timer(std::chrono::milliseconds(20), [this, &node]() {
       if (_channel->hasSinks()) {
@@ -49,11 +51,14 @@ public:
     if (_timer) {
       _timer->cancel();
     }
+    RCLCPP_INFO(_logger, "Test plugin instance '%s' shut down", _name.c_str());
   }
 
 private:
   std::optional<foxglove::RawChannel> _channel;
   rclcpp::TimerBase::SharedPtr _timer;
+  std::string _name;
+  rclcpp::Logger _logger = rclcpp::get_logger("test_plugin");
 };
 
 /// Claims to be built against an incompatible interface version; must not be initialized.
