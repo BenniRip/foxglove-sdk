@@ -979,12 +979,12 @@ bool FoxgloveBridge::isPluginChannel(ChannelId channelId) const {
 }
 
 void FoxgloveBridge::subscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
-  if (isPluginChannel(channelId)) {
-    return;
-  }
   RCLCPP_INFO(this->get_logger(),
               "received subscribe request for channel %" PRIu64 " from client %u",
               static_cast<uint64_t>(channelId), client.id);
+  if (isPluginChannel(channelId)) {
+    return;
+  }
   createOrIncrementSubscription(channelId, client.id, false, client.sink_id);
 }
 
@@ -1107,12 +1107,12 @@ void FoxgloveBridge::createOrIncrementSubscriptionLocked(ChannelId channelId, Cl
 }
 
 void FoxgloveBridge::unsubscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
-  if (isPluginChannel(channelId)) {
-    return;
-  }
   RCLCPP_INFO(this->get_logger(),
               "received unsubscribe request for channel %" PRIu64 " from client %u",
               static_cast<uint64_t>(channelId), client.id);
+  if (isPluginChannel(channelId)) {
+    return;
+  }
   removeOrDecrementSubscription(channelId, client.id, false);
 }
 
@@ -1785,6 +1785,11 @@ void FoxgloveBridge::gatewayConnectionStatusChanged(foxglove::RemoteAccessConnec
 void FoxgloveBridge::gatewaySubscribe(uint32_t clientId,
                                       const foxglove::ChannelDescriptor& channel) {
   if (isPluginChannel(channel.id())) {
+    // The sink ID only matters for replaying cached ROS messages, which plugin channels lack.
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Gateway: received subscribe request for channel %" PRIu64 " (\"%s\") from client %u",
+      static_cast<uint64_t>(channel.id()), std::string(channel.topic()).c_str(), clientId);
     return;
   }
   auto sinkId = _gateway->sinkId();
@@ -1805,13 +1810,13 @@ void FoxgloveBridge::gatewaySubscribe(uint32_t clientId,
 
 void FoxgloveBridge::gatewayUnsubscribe(uint32_t clientId,
                                         const foxglove::ChannelDescriptor& channel) {
-  if (isPluginChannel(channel.id())) {
-    return;
-  }
   RCLCPP_INFO(this->get_logger(),
               "Gateway: received unsubscribe request for channel %" PRIu64
               " (\"%s\") from client %u",
               static_cast<uint64_t>(channel.id()), std::string(channel.topic()).c_str(), clientId);
+  if (isPluginChannel(channel.id())) {
+    return;
+  }
   removeOrDecrementSubscription(channel.id(), clientId, true);
 }
 
