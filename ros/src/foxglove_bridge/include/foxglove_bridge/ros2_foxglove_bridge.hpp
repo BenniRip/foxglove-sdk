@@ -27,11 +27,18 @@
 #ifdef FOXGLOVE_REMOTE_ACCESS
 #include <foxglove/remote_access.hpp>
 #endif
+#include <foxglove_bridge/channel_source_plugin.hpp>
 #include <foxglove_bridge/generic_client.hpp>
 #include <foxglove_bridge/message_definition_cache.hpp>
 #include <foxglove_bridge/param_utils.hpp>
 #include <foxglove_bridge/parameter_interface.hpp>
 #include <foxglove_bridge/utils.hpp>
+
+namespace pluginlib {
+// Declared rather than included, so that including this header does not require pluginlib.
+template <class T>
+class ClassLoader;
+}  // namespace pluginlib
 
 namespace foxglove_bridge {
 
@@ -160,7 +167,13 @@ private:
   std::atomic<bool> _shuttingDown = false;
   foxglove::Context _serverContext;
 
+  // The loader must outlive the plugins it created, so it is declared first.
+  std::unique_ptr<pluginlib::ClassLoader<ChannelSourcePlugin>> _channelSourcePluginLoader;
+  std::vector<std::shared_ptr<ChannelSourcePlugin>> _channelSourcePlugins;
+
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr _clientCountPublisher;
+
+  void loadChannelSourcePlugins(const std::vector<std::string>& instanceNames);
 
   void subscribeConnectionGraph(bool subscribe);
 

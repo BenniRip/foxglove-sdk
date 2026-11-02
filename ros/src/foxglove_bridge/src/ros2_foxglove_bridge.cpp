@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <unordered_set>
 
+#include <pluginlib/class_loader.hpp>
 #include <rclcpp/version.h>
 #include <resource_retriever/retriever.hpp>
 
@@ -192,6 +193,8 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   const bool publishClientCount = this->get_parameter(PARAM_PUBLISH_CLIENT_COUNT).as_bool();
   const auto messageBacklogSize =
     saturatingToSizeT(this->get_parameter(PARAM_MESSAGE_BACKLOG_SIZE).as_int());
+  const auto channelSourcePlugins =
+    this->get_parameter(PARAM_CHANNEL_SOURCE_PLUGINS).as_string_array();
 
   const bool debug = this->get_parameter(PARAM_DEBUG).as_bool();
   if (debug) {
@@ -202,6 +205,9 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   }
 
   _serverContext = foxglove::Context::create();
+
+  // Before the server starts, so plugins' channels are advertised to the first clients.
+  loadChannelSourcePlugins(channelSourcePlugins);
 
   foxglove::WebSocketServerOptions sdkServerOptions;
   _capabilities = processCapabilities(capabilities);
@@ -479,6 +485,13 @@ FoxgloveBridge::~FoxgloveBridge() {
   RCLCPP_INFO(this->get_logger(), "Shutting down %s", this->get_name());
   if (_rosgraphPollThread) {
     _rosgraphPollThread->join();
+  }
+  for (const auto& plugin : _channelSourcePlugins) {
+    try {
+      plugin->shutdown();
+    } catch (const std::exception& ex) {
+      RCLCPP_ERROR(this->get_logger(), "Channel source plugin failed to shut down: %s", ex.what());
+    }
   }
   if (_sysinfoPublisher) {
     _sysinfoPublisher->stop();
@@ -928,6 +941,59 @@ void FoxgloveBridge::subscribeConnectionGraph(bool subscribe) {
   }
 }
 
+void FoxgloveBridge::loadChannelSourcePlugins(const std::vector<std::string>& instanceNames) {
+  std::unordered_set<std::string> loadedNames;
+  for (const auto& name : instanceNames) {
+    // Launch files cannot pass an empty string array, so they pass [''] instead.
+    if (name.empty()) {
+      continue;
+    }
+    if (!loadedNames.insert(name).second) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Channel source plugin instance '%s' is listed more than once; loading it once",
+                   name.c_str());
+      continue;
+    }
+    try {
+      const std::string classParam = name + "." + PARAM_CHANNEL_SOURCE_PLUGIN_CLASS;
+      auto classDescription = rcl_interfaces::msg::ParameterDescriptor{};
+      classDescription.name = classParam;
+      classDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
+      classDescription.description =
+        "pluginlib class name of the channel source plugin instance '" + name + "'.";
+      classDescription.read_only = true;
+      const auto className = this->declare_parameter(classParam, std::string(), classDescription);
+      if (className.empty()) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Not loading channel source plugin instance '%s': parameter '%s' is not set",
+                     name.c_str(), classParam.c_str());
+        continue;
+      }
+
+      if (!_channelSourcePluginLoader) {
+        _channelSourcePluginLoader = std::make_unique<pluginlib::ClassLoader<ChannelSourcePlugin>>(
+          "foxglove_bridge", "foxglove_bridge::ChannelSourcePlugin");
+      }
+      auto plugin = _channelSourcePluginLoader->createSharedInstance(className);
+      if (const int version = plugin->apiVersion(); version != CHANNEL_SOURCE_PLUGIN_API_VERSION) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Not loading channel source plugin instance '%s' (%s): it was built against "
+                     "plugin API version %d, but this bridge provides version %d. Rebuild the "
+                     "plugin against this foxglove_bridge.",
+                     name.c_str(), className.c_str(), version, CHANNEL_SOURCE_PLUGIN_API_VERSION);
+        continue;
+      }
+      plugin->initialize(*this, name, _serverContext);
+      _channelSourcePlugins.push_back(std::move(plugin));
+      RCLCPP_INFO(this->get_logger(), "Loaded channel source plugin instance '%s' (%s)",
+                  name.c_str(), className.c_str());
+    } catch (const std::exception& ex) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to load channel source plugin instance '%s': %s",
+                   name.c_str(), ex.what());
+    }
+  }
+}
+
 void FoxgloveBridge::subscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
   RCLCPP_INFO(this->get_logger(),
               "received subscribe request for channel %" PRIu64 " from client %u",
@@ -983,7 +1049,10 @@ void FoxgloveBridge::createOrIncrementSubscriptionLocked(ChannelId channelId, Cl
                                                          std::optional<SinkId> sinkId) {
   auto channelIt = _channels.find(channelId);
   if (channelIt == _channels.end()) {
-    RCLCPP_ERROR(this->get_logger(), "received subscribe request for unknown channel: %" PRIu64,
+    // Not a ROS channel: served by the server context's other publishers (system info, channel
+    // source plugins), or a ROS topic that disappeared just before the request.
+    RCLCPP_DEBUG(this->get_logger(),
+                 "Not creating a ROS subscription for channel %" PRIu64 ": not a ROS channel",
                  static_cast<uint64_t>(channelId));
     return;
   }
@@ -1070,9 +1139,10 @@ void FoxgloveBridge::removeOrDecrementSubscriptionLocked(ChannelId channelId, Cl
                                                          bool isGateway) {
   auto subIt = _subscriptions.find(channelId);
   if (subIt == _subscriptions.end()) {
-    RCLCPP_ERROR(this->get_logger(),
-                 "Client %u tried unsubscribing from channel %" PRIu64
-                 " but no subscription exists",
+    // Not a ROS channel (see createOrIncrementSubscriptionLocked), or its ROS subscription could
+    // not be created, which was logged when the client subscribed.
+    RCLCPP_DEBUG(this->get_logger(),
+                 "Client %u unsubscribed from channel %" PRIu64 ", which has no ROS subscription",
                  clientId, static_cast<uint64_t>(channelId));
     return;
   }
