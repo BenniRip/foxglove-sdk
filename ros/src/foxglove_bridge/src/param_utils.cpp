@@ -251,9 +251,9 @@ void declareParameters(rclcpp::Node* node) {
   channelSourcePluginsDescription.name = PARAM_CHANNEL_SOURCE_PLUGINS;
   channelSourcePluginsDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY;
   channelSourcePluginsDescription.description =
-    "List of pluginlib class names of foxglove_bridge::ChannelSourcePlugin implementations to "
-    "load. Each plugin serves additional, non-ROS channels over the bridge's server. Empty "
-    "entries are ignored.";
+    "Names of the channel source plugin instances to load. Each instance serves additional, "
+    "non-ROS channels over the bridge's server; '<name>.plugin' sets its pluginlib class and the "
+    "plugin reads its own parameters under '<name>.'. Empty entries are ignored.";
   channelSourcePluginsDescription.read_only = true;
   node->declare_parameter(PARAM_CHANNEL_SOURCE_PLUGINS, std::vector<std::string>(),
                           channelSourcePluginsDescription);

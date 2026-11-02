@@ -24,7 +24,8 @@ namespace {
 
 constexpr char TEST_PLUGIN_TOPIC[] = "/test_plugin/data";
 constexpr char TEST_PLUGIN_MESSAGE[] = R"({"value":42})";
-constexpr char WRONG_VERSION_PLUGIN_TOPIC[] = "/test_plugin/wrong_version";
+constexpr char SECOND_INSTANCE_TOPIC[] = "/second_instance/data";
+constexpr char WRONG_VERSION_PLUGIN_TOPIC[] = "/wrong_version/data";
 constexpr auto DEFAULT_TIMEOUT = std::chrono::seconds(10);
 // smoke_test uses 8765.
 constexpr int64_t PORT = 8766;
@@ -94,6 +95,13 @@ TEST(ChannelSourcePluginTest, subscribingToPluginChannelLogsNoErrors) {
   EXPECT_TRUE(errors.empty()) << "first unexpected error: " << errors.front();
 }
 
+TEST(ChannelSourcePluginTest, instancesOfTheSamePluginLoadSideBySide) {
+  foxglove::test::Client<websocketpp::config::asio_client> client;
+  auto channelFuture = client.waitForChannel(SECOND_INSTANCE_TOPIC);
+  ASSERT_EQ(std::future_status::ready, client.connect(URI).wait_for(DEFAULT_TIMEOUT));
+  EXPECT_EQ(std::future_status::ready, channelFuture.wait_for(DEFAULT_TIMEOUT));
+}
+
 TEST(ChannelSourcePluginTest, incompatiblePluginIsNotInitialized) {
   std::mutex topicsMutex;
   std::set<std::string> advertisedTopics;
@@ -134,14 +142,24 @@ int main(int argc, char** argv) {
     rclcpp::executors::SingleThreadedExecutor executor;
     rclcpp::NodeOptions nodeOptions;
     nodeOptions.append_parameter_override(foxglove_bridge::PARAM_PORT, PORT);
-    // The empty entry mirrors the launch file default; ThrowingPlugin and WrongApiVersionPlugin
-    // must be skipped without affecting the working plugin or the bridge.
+    // The empty entry mirrors the launch file default. Every instance other than test_plugin and
+    // second_instance must be skipped without affecting them or the bridge: one throws, one
+    // reports a different API version, one names an unknown class, one has no class, and
+    // test_plugin is listed twice.
     nodeOptions.append_parameter_override(
       foxglove_bridge::PARAM_CHANNEL_SOURCE_PLUGINS,
-      std::vector<std::string>({"", "foxglove_bridge_test_plugins::ThrowingPlugin",
-                                "foxglove_bridge_test_plugins::WrongApiVersionPlugin",
-                                "foxglove_bridge_test_plugins::TestChannelSourcePlugin",
-                                "foxglove_bridge_test_plugins::DoesNotExist"}));
+      std::vector<std::string>({"", "throwing", "wrong_version", "test_plugin", "unknown_class",
+                                "no_class", "second_instance", "test_plugin"}));
+    nodeOptions.append_parameter_override("throwing.plugin",
+                                          "foxglove_bridge_test_plugins::ThrowingPlugin");
+    nodeOptions.append_parameter_override("wrong_version.plugin",
+                                          "foxglove_bridge_test_plugins::WrongApiVersionPlugin");
+    nodeOptions.append_parameter_override("test_plugin.plugin",
+                                          "foxglove_bridge_test_plugins::TestChannelSourcePlugin");
+    nodeOptions.append_parameter_override("unknown_class.plugin",
+                                          "foxglove_bridge_test_plugins::DoesNotExist");
+    nodeOptions.append_parameter_override("second_instance.plugin",
+                                          "foxglove_bridge_test_plugins::TestChannelSourcePlugin");
     foxglove_bridge::FoxgloveBridge node(nodeOptions);
     executor.add_node(node.get_node_base_interface());
 

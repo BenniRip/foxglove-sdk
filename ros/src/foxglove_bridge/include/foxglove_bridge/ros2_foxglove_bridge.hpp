@@ -164,15 +164,11 @@ private:
 
   // The loader must outlive the plugins it created, so it is declared first.
   std::unique_ptr<pluginlib::ClassLoader<ChannelSourcePlugin>> _channelSourcePluginLoader;
-  // Only modified in the constructor, before the server starts.
   std::vector<std::shared_ptr<ChannelSourcePlugin>> _channelSourcePlugins;
 
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr _clientCountPublisher;
 
-  void loadChannelSourcePlugins(const std::vector<std::string>& pluginNames);
-
-  /// Returns true if a channel source plugin owns the channel, i.e. it is not a ROS channel.
-  bool isPluginChannel(ChannelId channelId) const;
+  void loadChannelSourcePlugins(const std::vector<std::string>& instanceNames);
 
   void subscribeConnectionGraph(bool subscribe);
 
