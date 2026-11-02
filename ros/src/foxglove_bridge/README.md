@@ -135,6 +135,7 @@ Parameters are provided to configure the behavior of the bridge. These parameter
 - **sysinfo_topic**: Topic name for system info messages. Defaults to `/foxglove_bridge/sysinfo`.
 - **sysinfo_refresh_interval**: Refresh interval for system info messages in milliseconds. Minimum 200ms. Defaults to `500`.
 - **message_backlog_size**: Maximum number of outgoing messages to buffer per connected WebSocket client or remote access gateway participant. The WebSocket server drops the oldest data-plane message on overflow and disconnects clients whose control-plane queue fills. The remote access gateway disconnects participants whose queue fills. Defaults to `1024`.
+- **channel_source_plugins**: List of pluginlib class names of channel source plugins to load, which serve additional, non-ROS data over the bridge's server. See [Channel source plugins](#channel-source-plugins). Empty entries are ignored. Defaults to `[]`.
 - **remote_access**: Enable the remote access gateway, allowing the bridge to be reached through Foxglove's platform without exposing a port on the device. Requires the bridge to be built with `FOXGLOVE_BRIDGE_REMOTE_ACCESS=ON` (the default for our published Docker images). Defaults to `false`.
 - **device_token**: Foxglove device token used to authenticate with the Foxglove platform when `remote_access` is enabled. If empty, the bridge falls back to the `FOXGLOVE_DEVICE_TOKEN` environment variable, which is preferred: a token passed as a parameter is readable by other nodes via the ROS 2 parameter services, while the environment variable is only visible to the bridge process.
 - **video_encoder**: Preferred backend for encoding published video tracks when `remote_access` is enabled: one of `auto`, `software`, `hardware`, `nvenc`, `vaapi`, `videotoolbox`. With `auto` (the default) the SDK chooses the backend and honors the `FOXGLOVE_VIDEO_ENCODER` environment variable. If the requested backend is unavailable on the host, the SDK falls back to another compatible encoder.
@@ -155,6 +156,32 @@ The `capabilities` parameter can accept one or more of the following values.
 - `connectionGraph`: Allow clients to subscribe to updates to the connection graph
 - `assets`: Allow clients to fetch assets
 - `time`: The server may publish time messages using `broadcastTime`. This can be used to sync frame state in panels like the 3D panel if the server's time disagrees with wall time.
+
+### Channel source plugins
+
+Channel source plugins serve data that does not come from ROS, such as a shared-memory transport or a hardware SDK, over the same WebSocket server (and remote access gateway) as the ROS topics. The Foxglove app does not merge multiple live connections, so this is how such data can be shown alongside ROS data.
+
+A plugin is a [pluginlib](https://github.com/ros/pluginlib) class deriving from `foxglove_bridge::ChannelSourcePlugin` (`foxglove_bridge/channel_source_plugin.hpp`). The bridge calls its `initialize()` with the bridge node and the Foxglove SDK context the server serves; the plugin creates `foxglove::RawChannel`s on that context and logs messages to them. `RawChannel::hasSinks()` reports whether any client is subscribed, so a plugin can read from its source only while someone is watching.
+
+To build a plugin in your own package, link the exported `foxglove_bridge::foxglove_bridge_plugin_api` target and export a plugin description for the `foxglove_bridge` base class:
+
+```cmake
+find_package(foxglove_bridge REQUIRED)
+find_package(pluginlib REQUIRED)
+
+add_library(my_channel_source SHARED src/my_channel_source.cpp)
+target_link_libraries(my_channel_source foxglove_bridge::foxglove_bridge_plugin_api pluginlib::pluginlib)
+pluginlib_export_plugin_description_file(foxglove_bridge plugins.xml)
+install(TARGETS my_channel_source LIBRARY DESTINATION lib)
+```
+
+Then load it by name:
+
+```bash
+ros2 run foxglove_bridge foxglove_bridge --ros-args -p channel_source_plugins:="['my_package::MyChannelSource']"
+```
+
+Plugins share the bridge's copy of the Foxglove SDK, so they must be rebuilt whenever foxglove_bridge is upgraded. The bridge refuses to load a plugin built against a different version of the plugin interface.
 
 ### Diagnostic topics
 

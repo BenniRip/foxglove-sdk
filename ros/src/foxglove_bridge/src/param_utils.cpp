@@ -247,6 +247,17 @@ void declareParameters(rclcpp::Node* node) {
   node->declare_parameter(PARAM_MESSAGE_BACKLOG_SIZE, DEFAULT_MESSAGE_BACKLOG_SIZE,
                           messageBacklogSizeDescription);
 
+  auto channelSourcePluginsDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  channelSourcePluginsDescription.name = PARAM_CHANNEL_SOURCE_PLUGINS;
+  channelSourcePluginsDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY;
+  channelSourcePluginsDescription.description =
+    "List of pluginlib class names of foxglove_bridge::ChannelSourcePlugin implementations to "
+    "load. Each plugin serves additional, non-ROS channels over the bridge's server. Empty "
+    "entries are ignored.";
+  channelSourcePluginsDescription.read_only = true;
+  node->declare_parameter(PARAM_CHANNEL_SOURCE_PLUGINS, std::vector<std::string>(),
+                          channelSourcePluginsDescription);
+
   auto remoteAccessDescription = rcl_interfaces::msg::ParameterDescriptor{};
   remoteAccessDescription.name = PARAM_REMOTE_ACCESS;
   remoteAccessDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;

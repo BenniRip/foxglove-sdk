@@ -192,6 +192,8 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   const bool publishClientCount = this->get_parameter(PARAM_PUBLISH_CLIENT_COUNT).as_bool();
   const auto messageBacklogSize =
     saturatingToSizeT(this->get_parameter(PARAM_MESSAGE_BACKLOG_SIZE).as_int());
+  const auto channelSourcePlugins =
+    this->get_parameter(PARAM_CHANNEL_SOURCE_PLUGINS).as_string_array();
 
   const bool debug = this->get_parameter(PARAM_DEBUG).as_bool();
   if (debug) {
@@ -202,6 +204,10 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   }
 
   _serverContext = foxglove::Context::create();
+
+  // Load plugins before the server starts, so that _channelSourcePlugins is never modified while
+  // server callbacks read it.
+  loadChannelSourcePlugins(channelSourcePlugins);
 
   foxglove::WebSocketServerOptions sdkServerOptions;
   _capabilities = processCapabilities(capabilities);
@@ -479,6 +485,13 @@ FoxgloveBridge::~FoxgloveBridge() {
   RCLCPP_INFO(this->get_logger(), "Shutting down %s", this->get_name());
   if (_rosgraphPollThread) {
     _rosgraphPollThread->join();
+  }
+  for (const auto& plugin : _channelSourcePlugins) {
+    try {
+      plugin->shutdown();
+    } catch (const std::exception& ex) {
+      RCLCPP_ERROR(this->get_logger(), "Channel source plugin failed to shut down: %s", ex.what());
+    }
   }
   if (_sysinfoPublisher) {
     _sysinfoPublisher->stop();
@@ -928,7 +941,47 @@ void FoxgloveBridge::subscribeConnectionGraph(bool subscribe) {
   }
 }
 
+void FoxgloveBridge::loadChannelSourcePlugins(const std::vector<std::string>& pluginNames) {
+  for (const auto& pluginName : pluginNames) {
+    // Launch files cannot pass an empty string array, so they pass [''] instead.
+    if (pluginName.empty()) {
+      continue;
+    }
+    try {
+      if (!_channelSourcePluginLoader) {
+        _channelSourcePluginLoader = std::make_unique<pluginlib::ClassLoader<ChannelSourcePlugin>>(
+          "foxglove_bridge", "foxglove_bridge::ChannelSourcePlugin");
+      }
+      auto plugin = _channelSourcePluginLoader->createSharedInstance(pluginName);
+      if (const int version = plugin->apiVersion(); version != CHANNEL_SOURCE_PLUGIN_API_VERSION) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Not loading channel source plugin %s: it was built against plugin API "
+                     "version %d, but this bridge provides version %d. Rebuild the plugin "
+                     "against this foxglove_bridge.",
+                     pluginName.c_str(), version, CHANNEL_SOURCE_PLUGIN_API_VERSION);
+        continue;
+      }
+      plugin->initialize(*this, _serverContext);
+      _channelSourcePlugins.push_back(std::move(plugin));
+      RCLCPP_INFO(this->get_logger(), "Loaded channel source plugin %s", pluginName.c_str());
+    } catch (const std::exception& ex) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to load channel source plugin %s: %s",
+                   pluginName.c_str(), ex.what());
+    }
+  }
+}
+
+bool FoxgloveBridge::isPluginChannel(ChannelId channelId) const {
+  return std::any_of(_channelSourcePlugins.begin(), _channelSourcePlugins.end(),
+                     [channelId](const auto& plugin) {
+                       return plugin->ownsChannel(channelId);
+                     });
+}
+
 void FoxgloveBridge::subscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
+  if (isPluginChannel(channelId)) {
+    return;
+  }
   RCLCPP_INFO(this->get_logger(),
               "received subscribe request for channel %" PRIu64 " from client %u",
               static_cast<uint64_t>(channelId), client.id);
@@ -1054,6 +1107,9 @@ void FoxgloveBridge::createOrIncrementSubscriptionLocked(ChannelId channelId, Cl
 }
 
 void FoxgloveBridge::unsubscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
+  if (isPluginChannel(channelId)) {
+    return;
+  }
   RCLCPP_INFO(this->get_logger(),
               "received unsubscribe request for channel %" PRIu64 " from client %u",
               static_cast<uint64_t>(channelId), client.id);
@@ -1728,6 +1784,9 @@ void FoxgloveBridge::gatewayConnectionStatusChanged(foxglove::RemoteAccessConnec
 
 void FoxgloveBridge::gatewaySubscribe(uint32_t clientId,
                                       const foxglove::ChannelDescriptor& channel) {
+  if (isPluginChannel(channel.id())) {
+    return;
+  }
   auto sinkId = _gateway->sinkId();
   if (!sinkId.has_value()) {
     RCLCPP_WARN(this->get_logger(),
@@ -1746,6 +1805,9 @@ void FoxgloveBridge::gatewaySubscribe(uint32_t clientId,
 
 void FoxgloveBridge::gatewayUnsubscribe(uint32_t clientId,
                                         const foxglove::ChannelDescriptor& channel) {
+  if (isPluginChannel(channel.id())) {
+    return;
+  }
   RCLCPP_INFO(this->get_logger(),
               "Gateway: received unsubscribe request for channel %" PRIu64
               " (\"%s\") from client %u",
