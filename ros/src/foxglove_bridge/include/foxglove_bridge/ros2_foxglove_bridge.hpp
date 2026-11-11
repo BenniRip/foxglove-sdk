@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <variant>
 
+#include <pluginlib/class_loader.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rmw/types.h>
 #include <rosgraph_msgs/msg/clock.hpp>
@@ -27,6 +28,7 @@
 #ifdef FOXGLOVE_REMOTE_ACCESS
 #include <foxglove/remote_access.hpp>
 #endif
+#include <foxglove_bridge/channel_source_plugin.hpp>
 #include <foxglove_bridge/generic_client.hpp>
 #include <foxglove_bridge/message_definition_cache.hpp>
 #include <foxglove_bridge/param_utils.hpp>
@@ -160,7 +162,17 @@ private:
   std::atomic<bool> _shuttingDown = false;
   foxglove::Context _serverContext;
 
+  // The loader must outlive the plugins it created, so it is declared first.
+  std::unique_ptr<pluginlib::ClassLoader<ChannelSourcePlugin>> _channelSourcePluginLoader;
+  std::vector<pluginlib::UniquePtr<ChannelSourcePlugin>> _channelSourcePlugins;
+
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr _clientCountPublisher;
+
+  void loadChannelSourcePlugins(const std::vector<std::string>& instanceNames);
+
+  void loadChannelSourcePlugin(const std::string& name);
+
+  void shutdownChannelSourcePlugins();
 
   void subscribeConnectionGraph(bool subscribe);
 

@@ -12,6 +12,7 @@
 
     <!-- ROS 2 runtime dependencies -->
     <depend>ament_index_cpp</depend>
+    <depend>pluginlib</depend>
     <depend>rclcpp</depend>
     <depend>rclcpp_components</depend>
     <depend>rosx_introspection</depend>
@@ -20,6 +21,9 @@
          releases a fix (https://github.com/facontidavide/rosx_introspection/pull/39) -->
     <build_depend>sensor_msgs</build_depend>
     <build_depend>geometry_msgs</build_depend>
+    <!-- foxglove_bridge exports rosx_introspection to its CMake consumers, so they need these too. -->
+    <build_export_depend>sensor_msgs</build_export_depend>
+    <build_export_depend>geometry_msgs</build_export_depend>
 
     <!-- Test dependencies -->
     <test_depend>ament_cmake_gtest</test_depend>
