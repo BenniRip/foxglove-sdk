@@ -184,7 +184,10 @@ TEST(ChannelSourcePluginTest, instancesOfTheSamePluginLoadSideBySide) {
 
 TEST(ChannelSourcePluginTest, failingInstancesAreSkippedWithAnError) {
   EXPECT_TRUE(contains(g_startupErrors, "instance 'throwing': initialization failure"));
-  EXPECT_TRUE(contains(g_startupErrors, "instance 'unknown_class'"));
+  EXPECT_TRUE(contains(g_startupErrors,
+                       "instance 'unknown_class': no plugin description declares "
+                       "the class 'foxglove_bridge_test_plugins::DoesNotExist'"));
+  EXPECT_FALSE(contains(g_startupErrors, "DoesNotExist'. If the plugin was built against"));
   EXPECT_TRUE(contains(g_startupErrors, "parameter 'no_class.plugin' is not set"));
   EXPECT_TRUE(contains(g_startupErrors, "instance 'version_mismatch'"));
   EXPECT_TRUE(contains(g_startupErrors, "rebuild it"));

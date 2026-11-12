@@ -8,7 +8,6 @@
 #include <type_traits>
 #include <unordered_set>
 
-#include <pluginlib/exceptions.hpp>
 #include <rclcpp/version.h>
 #include <rcpputils/scope_exit.hpp>
 #include <resource_retriever/retriever.hpp>
@@ -17,6 +16,8 @@
 #include <foxglove_bridge/ros2_foxglove_bridge.hpp>
 #include <foxglove_bridge/utils.hpp>
 #include <foxglove_bridge/version.hpp>
+
+#include "channel_source_plugin_host.hpp"
 
 namespace foxglove_bridge {
 namespace {
@@ -143,33 +144,10 @@ private:
 };
 #endif
 
-// Set while a plugin channel is created on this thread. Sinks are notified of a new channel
-// synchronously, before the channel can be claimed by its plugin instance.
-thread_local bool t_creatingPluginChannel = false;
-
 }  // namespace
 
 using namespace std::chrono_literals;
 using namespace std::placeholders;
-
-class FoxgloveBridge::PluginChannels final : public ChannelSourcePluginChannels {
-public:
-  PluginChannels(FoxgloveBridge& bridge, std::string instanceName)
-      : _bridge(bridge)
-      , _instanceName(std::move(instanceName)) {}
-
-  ~PluginChannels() = default;
-
-protected:
-  bool createAndClaim(const std::function<std::optional<uint64_t>(const foxglove::Context&)>&
-                        createChannel) override {
-    return _bridge.createAndClaimPluginChannel(_instanceName, createChannel);
-  }
-
-private:
-  FoxgloveBridge& _bridge;
-  std::string _instanceName;
-};
 
 FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
     : Node("foxglove_bridge", options) {
@@ -230,13 +208,17 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
 
   _serverContext = foxglove::Context::create();
 
+  _channelSourcePlugins = std::make_unique<ChannelSourcePluginHost>(
+    *this, _serverContext, _subscriptionsMutex, [this](uint64_t channelId) {
+      return _channels.find(channelId) != _channels.end();
+    });
   // The destructor does not run if the rest of startup throws, so shut loaded plugins down here.
   auto pluginShutdownGuard = rcpputils::make_scope_exit([this]() {
-    shutdownChannelSourcePlugins();
-    destroyChannelSourcePlugins();
+    _channelSourcePlugins->shutdown();
+    _channelSourcePlugins->destroy();
   });
   // Before the server starts, so plugins' channels are advertised to the first clients.
-  loadChannelSourcePlugins(channelSourcePlugins);
+  _channelSourcePlugins->load(channelSourcePlugins);
 
   foxglove::WebSocketServerOptions sdkServerOptions;
   _capabilities = processCapabilities(capabilities);
@@ -517,7 +499,7 @@ FoxgloveBridge::~FoxgloveBridge() {
   if (_rosgraphPollThread) {
     _rosgraphPollThread->join();
   }
-  shutdownChannelSourcePlugins();
+  _channelSourcePlugins->shutdown();
   if (_sysinfoPublisher) {
     _sysinfoPublisher->stop();
   }
@@ -539,7 +521,7 @@ FoxgloveBridge::~FoxgloveBridge() {
     _paramOpCv.notify_all();
     _paramWorkerThread->join();
   }
-  destroyChannelSourcePlugins();
+  _channelSourcePlugins->destroy();
   RCLCPP_INFO(this->get_logger(), "Shutdown complete");
 }
 
@@ -703,7 +685,7 @@ void FoxgloveBridge::updateAdvertisedTopics(
       }
 
       const ChannelId channelId = channelResult.value().id();
-      if (const auto owner = pluginChannelOwner(channelId)) {
+      if (const auto owner = _channelSourcePlugins->channelOwner(channelId)) {
         // The SDK returned the plugin's identical channel. Dropping the handle keeps it open.
         if (_rosTopicsServedByPlugins.insert(topic).second) {
           RCLCPP_WARN(this->get_logger(),
@@ -975,145 +957,6 @@ void FoxgloveBridge::subscribeConnectionGraph(bool subscribe) {
   } else if (_graphSubscriptionCount.fetch_sub(1) <= 0) {
     _graphSubscriptionCount.fetch_add(1);
   }
-}
-
-void FoxgloveBridge::loadChannelSourcePlugins(const std::vector<std::string>& instanceNames) {
-  std::unordered_set<std::string> seenNames;
-  for (const auto& name : instanceNames) {
-    if (!seenNames.insert(name).second) {
-      RCLCPP_ERROR(this->get_logger(), "Ignoring duplicate channel source plugin instance '%s'",
-                   name.c_str());
-      continue;
-    }
-    // Outside the try block, so that an invalid value fails startup rather than making a required
-    // instance optional.
-    const std::string requiredParam = name + "." + PARAM_CHANNEL_SOURCE_PLUGIN_REQUIRED;
-    auto requiredDescription = rcl_interfaces::msg::ParameterDescriptor{};
-    requiredDescription.name = requiredParam;
-    requiredDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
-    requiredDescription.description =
-      "Fail bridge startup if the channel source plugin instance '" + name + "' fails to load.";
-    requiredDescription.read_only = true;
-    const bool required = this->declare_parameter(requiredParam, false, requiredDescription);
-
-    std::string error;
-    try {
-      loadChannelSourcePlugin(name);
-      continue;
-    } catch (const std::exception& ex) {
-      error = ex.what();
-    } catch (...) {
-      error = "unknown exception";
-    }
-    if (required) {
-      throw std::runtime_error("Failed to load required channel source plugin instance '" + name +
-                               "': " + error);
-    }
-    RCLCPP_ERROR(this->get_logger(), "Failed to load channel source plugin instance '%s': %s",
-                 name.c_str(), error.c_str());
-  }
-}
-
-void FoxgloveBridge::loadChannelSourcePlugin(const std::string& name) {
-  const std::string classParam = name + "." + PARAM_CHANNEL_SOURCE_PLUGIN_CLASS;
-  auto classDescription = rcl_interfaces::msg::ParameterDescriptor{};
-  classDescription.name = classParam;
-  classDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
-  classDescription.description =
-    "pluginlib class name of the channel source plugin instance '" + name + "'.";
-  classDescription.read_only = true;
-  const auto className = this->declare_parameter(classParam, std::string(), classDescription);
-  if (className.empty()) {
-    throw std::runtime_error("parameter '" + classParam + "' is not set");
-  }
-
-  if (!_channelSourcePluginLoader) {
-    _channelSourcePluginLoader = std::make_unique<pluginlib::ClassLoader<ChannelSourcePlugin>>(
-      "foxglove_bridge", "foxglove_bridge::ChannelSourcePlugin");
-  }
-  ChannelSourcePluginInstance instance;
-  try {
-    instance.plugin = _channelSourcePluginLoader->createUniqueInstance(className);
-  } catch (const pluginlib::CreateClassException& ex) {
-    // A plugin built against another version registers for another base class, see
-    // channel_source_plugin.hpp.
-    throw std::runtime_error(std::string(ex.what()) +
-                             ". If the plugin was built against a foxglove_bridge version other "
-                             "than " +
-                             FOXGLOVE_BRIDGE_VERSION + ", rebuild it.");
-  } catch (const pluginlib::LibraryLoadException& ex) {
-    throw std::runtime_error(std::string(ex.what()) +
-                             ". If the plugin was built against a foxglove_bridge version other "
-                             "than " +
-                             FOXGLOVE_BRIDGE_VERSION + ", rebuild it.");
-  }
-  instance.channels = std::make_unique<PluginChannels>(*this, name);
-  instance.plugin->initialize(*this, name, *instance.channels);
-  _channelSourcePlugins.push_back(std::move(instance));
-  RCLCPP_INFO(this->get_logger(), "Loaded channel source plugin instance '%s' (%s)", name.c_str(),
-              className.c_str());
-}
-
-void FoxgloveBridge::shutdownChannelSourcePlugins() {
-  for (auto it = _channelSourcePlugins.rbegin(); it != _channelSourcePlugins.rend(); ++it) {
-    try {
-      it->plugin->shutdown();
-    } catch (const std::exception& ex) {
-      RCLCPP_ERROR(this->get_logger(), "Channel source plugin failed to shut down: %s", ex.what());
-    } catch (...) {
-      RCLCPP_ERROR(this->get_logger(), "Channel source plugin failed to shut down");
-    }
-  }
-}
-
-void FoxgloveBridge::destroyChannelSourcePlugins() {
-  while (!_channelSourcePlugins.empty()) {
-    _channelSourcePlugins.pop_back();
-  }
-}
-
-bool FoxgloveBridge::createAndClaimPluginChannel(
-  const std::string& owner,
-  const std::function<std::optional<uint64_t>(const foxglove::Context&)>& createChannel) {
-  // Keeps ROS channels from being created between creating and claiming the channel.
-  std::lock_guard<std::mutex> lock(_subscriptionsMutex);
-  std::optional<uint64_t> channelId;
-  {
-    t_creatingPluginChannel = true;
-    auto resetFlag = rcpputils::make_scope_exit([]() {
-      t_creatingPluginChannel = false;
-    });
-    channelId = createChannel(_serverContext);
-  }
-  if (!channelId.has_value()) {
-    return true;
-  }
-  if (_channels.find(*channelId) != _channels.end()) {
-    RCLCPP_ERROR(this->get_logger(),
-                 "Channel source plugin instance '%s' cannot use channel %" PRIu64
-                 ": it is identical to the channel of a ROS topic",
-                 owner.c_str(), *channelId);
-    return false;
-  }
-  std::lock_guard<std::mutex> ownersLock(_pluginChannelOwnersMutex);
-  const auto [it, inserted] = _pluginChannelOwners.try_emplace(*channelId, owner);
-  if (!inserted && it->second != owner) {
-    RCLCPP_ERROR(this->get_logger(),
-                 "Channel source plugin instance '%s' cannot use channel %" PRIu64
-                 ": it is identical to a channel of instance '%s'",
-                 owner.c_str(), *channelId, it->second.c_str());
-    return false;
-  }
-  return true;
-}
-
-std::optional<std::string> FoxgloveBridge::pluginChannelOwner(ChannelId channelId) {
-  std::lock_guard<std::mutex> lock(_pluginChannelOwnersMutex);
-  const auto it = _pluginChannelOwners.find(channelId);
-  if (it == _pluginChannelOwners.end()) {
-    return std::nullopt;
-  }
-  return it->second;
 }
 
 void FoxgloveBridge::subscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
@@ -1848,7 +1691,8 @@ foxglove::QosProfile FoxgloveBridge::classifyRemoteAccessQos(
   // the default (lossy data-track) profile.
   foxglove::QosProfile profile;
   // Plugin channels are not ROS topics, even if they share a ROS topic's name.
-  if (t_creatingPluginChannel || pluginChannelOwner(channel.id()).has_value()) {
+  if (ChannelSourcePluginHost::creatingChannelOnThisThread() ||
+      _channelSourcePlugins->channelOwner(channel.id()).has_value()) {
     return profile;
   }
   const auto info = collectTopicQosInfo(std::string(channel.topic()));

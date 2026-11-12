@@ -194,6 +194,7 @@ add_library(foxglove_bridge_component SHARED
   src/message_definition_cache.cpp
   src/param_utils.cpp
   src/ros2_foxglove_bridge.cpp
+  src/channel_source_plugin_host.cpp
   src/parameter_interface.cpp
   src/generic_client.cpp
 )
@@ -216,24 +217,21 @@ if (FOXGLOVE_BRIDGE_REMOTE_ACCESS)
   target_compile_definitions(foxglove_bridge_component PUBLIC FOXGLOVE_REMOTE_ACCESS)
 endif()
 
-# PUBLIC dependencies are those of the installed headers.
 target_link_libraries(foxglove_bridge_component
-  PUBLIC
-    plugin_api
-    foxglove_cpp_shared
-    ${rosgraph_msgs_TARGETS}
-    ${std_msgs_TARGETS}
-    pluginlib::pluginlib
-    rclcpp::rclcpp
-    rcpputils::rcpputils
-    rosx_introspection::rosx_introspection
-  PRIVATE
-    ${rcl_interfaces_TARGETS}
-    ament_index_cpp::ament_index_cpp
-    rclcpp_components::component
-    rcutils::rcutils
-    resource_retriever::resource_retriever
-    rosidl_typesupport_introspection_cpp::rosidl_typesupport_introspection_cpp
+  foxglove_cpp_shared
+  plugin_api
+  ${rcl_interfaces_TARGETS}
+  ${rosgraph_msgs_TARGETS}
+  ${std_msgs_TARGETS}
+  ament_index_cpp::ament_index_cpp
+  pluginlib::pluginlib
+  rclcpp::rclcpp
+  rclcpp_components::component
+  rcpputils::rcpputils
+  rcutils::rcutils
+  resource_retriever::resource_retriever
+  rosidl_typesupport_introspection_cpp::rosidl_typesupport_introspection_cpp
+  rosx_introspection::rosx_introspection
 )
 
 rclcpp_components_register_nodes(foxglove_bridge_component "foxglove_bridge::FoxgloveBridge")
@@ -331,7 +329,6 @@ install(FILES include/foxglove_bridge/ros2_foxglove_bridge.hpp
   DESTINATION include/${PROJECT_NAME}/
 )
 install(TARGETS foxglove_bridge_component
-  EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -340,8 +337,14 @@ install(TARGETS foxglove_bridge_component
 # runtime linker can find it via RPATH ($ORIGIN). Not needed when remote access
 # is disabled, since the SDK is statically linked into foxglove_cpp_shared.
 install(TARGETS foxglove_cpp_shared plugin_api
-  EXPORT export_${PROJECT_NAME}
+  EXPORT ${PROJECT_NAME}_plugin_api
   LIBRARY DESTINATION lib
+)
+# Not exported with ament_export_targets, which would make ament_target_dependencies() use the
+# exported targets instead of foxglove_bridge_LIBRARIES. The config extras include this file.
+install(EXPORT ${PROJECT_NAME}_plugin_api
+  NAMESPACE ${PROJECT_NAME}::
+  DESTINATION share/${PROJECT_NAME}/cmake
 )
 if (FOXGLOVE_BRIDGE_REMOTE_ACCESS)
   install(FILES $<TARGET_FILE:foxglove-shared> DESTINATION lib)
@@ -362,15 +365,5 @@ install(FILES include/foxglove_bridge/channel_source_plugin.hpp
 install(DIRECTORY ${FOXGLOVE_SDK_INCLUDE_DIRS}/
   DESTINATION include/${PROJECT_NAME}/sdk/
 )
-# Keeps foxglove_bridge_LIBRARIES set for consumers that do not use the exported targets.
 ament_export_libraries(foxglove_bridge_component)
-ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(
-  pluginlib
-  rclcpp
-  rcpputils
-  rosgraph_msgs
-  rosx_introspection
-  std_msgs
-)
-ament_package()
+ament_package(CONFIG_EXTRAS cmake/foxglove_bridge-extras.cmake)
