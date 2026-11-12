@@ -168,9 +168,10 @@ target_include_directories(plugin_api INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-# The bridge refuses plugins built against another version.
+# Plugins built against another version cannot be loaded, see channel_source_plugin.hpp.
+string(MAKE_C_IDENTIFIER "abi_v${FOXGLOVE_BRIDGE_VERSION}" FOXGLOVE_BRIDGE_PLUGIN_ABI_NAMESPACE)
 target_compile_definitions(plugin_api INTERFACE
-  FOXGLOVE_BRIDGE_PLUGIN_API_VERSION="${FOXGLOVE_BRIDGE_VERSION}"
+  FOXGLOVE_BRIDGE_PLUGIN_ABI_NAMESPACE=${FOXGLOVE_BRIDGE_PLUGIN_ABI_NAMESPACE}
 )
 target_link_libraries(plugin_api INTERFACE
   foxglove_cpp_shared
@@ -293,7 +294,10 @@ if(BUILD_TESTING)
 
   # Test plugins are built like an out-of-tree plugin (against plugin_api) and
   # mock-installed under a separate package name, so the bridge loads them through pluginlib.
-  add_library(foxglove_bridge_test_plugins SHARED tests/channel_source_plugin/test_plugins.cpp)
+  add_library(foxglove_bridge_test_plugins SHARED
+    tests/channel_source_plugin/test_plugins.cpp
+    tests/channel_source_plugin/version_mismatch_plugin.cpp
+  )
   target_link_libraries(foxglove_bridge_test_plugins
     plugin_api
     pluginlib::pluginlib

@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cinttypes>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -9,6 +8,7 @@
 #include <type_traits>
 #include <unordered_set>
 
+#include <pluginlib/exceptions.hpp>
 #include <rclcpp/version.h>
 #include <rcpputils/scope_exit.hpp>
 #include <resource_retriever/retriever.hpp>
@@ -143,10 +143,33 @@ private:
 };
 #endif
 
+// Set while a plugin channel is created on this thread. Sinks are notified of a new channel
+// synchronously, before the channel can be claimed by its plugin instance.
+thread_local bool t_creatingPluginChannel = false;
+
 }  // namespace
 
 using namespace std::chrono_literals;
 using namespace std::placeholders;
+
+class FoxgloveBridge::PluginChannels final : public ChannelSourcePluginChannels {
+public:
+  PluginChannels(FoxgloveBridge& bridge, std::string instanceName)
+      : _bridge(bridge)
+      , _instanceName(std::move(instanceName)) {}
+
+  ~PluginChannels() = default;
+
+protected:
+  bool createAndClaim(const std::function<std::optional<uint64_t>(const foxglove::Context&)>&
+                        createChannel) override {
+    return _bridge.createAndClaimPluginChannel(_instanceName, createChannel);
+  }
+
+private:
+  FoxgloveBridge& _bridge;
+  std::string _instanceName;
+};
 
 FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
     : Node("foxglove_bridge", options) {
@@ -210,6 +233,7 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   // The destructor does not run if the rest of startup throws, so shut loaded plugins down here.
   auto pluginShutdownGuard = rcpputils::make_scope_exit([this]() {
     shutdownChannelSourcePlugins();
+    destroyChannelSourcePlugins();
   });
   // Before the server starts, so plugins' channels are advertised to the first clients.
   loadChannelSourcePlugins(channelSourcePlugins);
@@ -515,6 +539,7 @@ FoxgloveBridge::~FoxgloveBridge() {
     _paramOpCv.notify_all();
     _paramWorkerThread->join();
   }
+  destroyChannelSourcePlugins();
   RCLCPP_INFO(this->get_logger(), "Shutdown complete");
 }
 
@@ -678,6 +703,16 @@ void FoxgloveBridge::updateAdvertisedTopics(
       }
 
       const ChannelId channelId = channelResult.value().id();
+      if (const auto owner = pluginChannelOwner(channelId)) {
+        // The SDK returned the plugin's identical channel. Dropping the handle keeps it open.
+        if (_rosTopicsServedByPlugins.insert(topic).second) {
+          RCLCPP_WARN(this->get_logger(),
+                      "Not advertising ROS topic \"%s\": channel source plugin instance '%s' "
+                      "serves an identical channel",
+                      topic.c_str(), owner->c_str());
+        }
+        continue;
+      }
       RCLCPP_INFO(this->get_logger(), "Advertising new channel %" PRIu64 " for topic \"%s\"",
                   static_cast<uint64_t>(channelId), topic.c_str());
       _channels.insert({channelId, std::move(channelResult.value())});
@@ -950,18 +985,19 @@ void FoxgloveBridge::loadChannelSourcePlugins(const std::vector<std::string>& in
                    name.c_str());
       continue;
     }
-    bool required = false;
+    // Outside the try block, so that an invalid value fails startup rather than making a required
+    // instance optional.
+    const std::string requiredParam = name + "." + PARAM_CHANNEL_SOURCE_PLUGIN_REQUIRED;
+    auto requiredDescription = rcl_interfaces::msg::ParameterDescriptor{};
+    requiredDescription.name = requiredParam;
+    requiredDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
+    requiredDescription.description =
+      "Fail bridge startup if the channel source plugin instance '" + name + "' fails to load.";
+    requiredDescription.read_only = true;
+    const bool required = this->declare_parameter(requiredParam, false, requiredDescription);
+
     std::string error;
     try {
-      const std::string requiredParam = name + "." + PARAM_CHANNEL_SOURCE_PLUGIN_REQUIRED;
-      auto requiredDescription = rcl_interfaces::msg::ParameterDescriptor{};
-      requiredDescription.name = requiredParam;
-      requiredDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
-      requiredDescription.description =
-        "Fail bridge startup if the channel source plugin instance '" + name + "' fails to load.";
-      requiredDescription.read_only = true;
-      required = this->declare_parameter(requiredParam, false, requiredDescription);
-
       loadChannelSourcePlugin(name);
       continue;
     } catch (const std::exception& ex) {
@@ -995,29 +1031,89 @@ void FoxgloveBridge::loadChannelSourcePlugin(const std::string& name) {
     _channelSourcePluginLoader = std::make_unique<pluginlib::ClassLoader<ChannelSourcePlugin>>(
       "foxglove_bridge", "foxglove_bridge::ChannelSourcePlugin");
   }
-  auto plugin = _channelSourcePluginLoader->createUniqueInstance(className);
-  // Plugins share the bridge's SDK build, which has no stable ABI.
-  if (std::strcmp(plugin->bridgeVersion(), FOXGLOVE_BRIDGE_VERSION) != 0) {
-    throw std::runtime_error(className + " was built against foxglove_bridge " +
-                             plugin->bridgeVersion() + ", but this is foxglove_bridge " +
-                             FOXGLOVE_BRIDGE_VERSION + ". Rebuild the plugin.");
+  ChannelSourcePluginInstance instance;
+  try {
+    instance.plugin = _channelSourcePluginLoader->createUniqueInstance(className);
+  } catch (const pluginlib::CreateClassException& ex) {
+    // A plugin built against another version registers for another base class, see
+    // channel_source_plugin.hpp.
+    throw std::runtime_error(std::string(ex.what()) +
+                             ". If the plugin was built against a foxglove_bridge version other "
+                             "than " +
+                             FOXGLOVE_BRIDGE_VERSION + ", rebuild it.");
+  } catch (const pluginlib::LibraryLoadException& ex) {
+    throw std::runtime_error(std::string(ex.what()) +
+                             ". If the plugin was built against a foxglove_bridge version other "
+                             "than " +
+                             FOXGLOVE_BRIDGE_VERSION + ", rebuild it.");
   }
-  plugin->initialize(*this, name, _serverContext);
-  _channelSourcePlugins.push_back(std::move(plugin));
+  instance.channels = std::make_unique<PluginChannels>(*this, name);
+  instance.plugin->initialize(*this, name, *instance.channels);
+  _channelSourcePlugins.push_back(std::move(instance));
   RCLCPP_INFO(this->get_logger(), "Loaded channel source plugin instance '%s' (%s)", name.c_str(),
               className.c_str());
 }
 
 void FoxgloveBridge::shutdownChannelSourcePlugins() {
-  for (const auto& plugin : _channelSourcePlugins) {
+  for (auto it = _channelSourcePlugins.rbegin(); it != _channelSourcePlugins.rend(); ++it) {
     try {
-      plugin->shutdown();
+      it->plugin->shutdown();
     } catch (const std::exception& ex) {
       RCLCPP_ERROR(this->get_logger(), "Channel source plugin failed to shut down: %s", ex.what());
     } catch (...) {
       RCLCPP_ERROR(this->get_logger(), "Channel source plugin failed to shut down");
     }
   }
+}
+
+void FoxgloveBridge::destroyChannelSourcePlugins() {
+  while (!_channelSourcePlugins.empty()) {
+    _channelSourcePlugins.pop_back();
+  }
+}
+
+bool FoxgloveBridge::createAndClaimPluginChannel(
+  const std::string& owner,
+  const std::function<std::optional<uint64_t>(const foxglove::Context&)>& createChannel) {
+  // Keeps ROS channels from being created between creating and claiming the channel.
+  std::lock_guard<std::mutex> lock(_subscriptionsMutex);
+  std::optional<uint64_t> channelId;
+  {
+    t_creatingPluginChannel = true;
+    auto resetFlag = rcpputils::make_scope_exit([]() {
+      t_creatingPluginChannel = false;
+    });
+    channelId = createChannel(_serverContext);
+  }
+  if (!channelId.has_value()) {
+    return true;
+  }
+  if (_channels.find(*channelId) != _channels.end()) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Channel source plugin instance '%s' cannot use channel %" PRIu64
+                 ": it is identical to the channel of a ROS topic",
+                 owner.c_str(), *channelId);
+    return false;
+  }
+  std::lock_guard<std::mutex> ownersLock(_pluginChannelOwnersMutex);
+  const auto [it, inserted] = _pluginChannelOwners.try_emplace(*channelId, owner);
+  if (!inserted && it->second != owner) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Channel source plugin instance '%s' cannot use channel %" PRIu64
+                 ": it is identical to a channel of instance '%s'",
+                 owner.c_str(), *channelId, it->second.c_str());
+    return false;
+  }
+  return true;
+}
+
+std::optional<std::string> FoxgloveBridge::pluginChannelOwner(ChannelId channelId) {
+  std::lock_guard<std::mutex> lock(_pluginChannelOwnersMutex);
+  const auto it = _pluginChannelOwners.find(channelId);
+  if (it == _pluginChannelOwners.end()) {
+    return std::nullopt;
+  }
+  return it->second;
 }
 
 void FoxgloveBridge::subscribe(ChannelId channelId, const foxglove::ClientMetadata& client) {
@@ -1164,10 +1260,17 @@ void FoxgloveBridge::removeOrDecrementSubscriptionLocked(ChannelId channelId, Cl
                                                          bool isGateway) {
   auto subIt = _subscriptions.find(channelId);
   if (subIt == _subscriptions.end()) {
-    // Not a ROS channel, or creating its ROS subscription failed, which was already logged.
-    RCLCPP_DEBUG(this->get_logger(),
-                 "Client %u unsubscribed from channel %" PRIu64 ", which has no ROS subscription",
-                 clientId, static_cast<uint64_t>(channelId));
+    if (_channels.find(channelId) != _channels.end()) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Client %u tried unsubscribing from channel %" PRIu64
+                   " but no subscription exists",
+                   clientId, static_cast<uint64_t>(channelId));
+    } else {
+      // System info and plugin channels, or a ROS channel that was just removed.
+      RCLCPP_DEBUG(this->get_logger(),
+                   "Client %u unsubscribed from channel %" PRIu64 ", which is not a ROS channel",
+                   clientId, static_cast<uint64_t>(channelId));
+    }
     return;
   }
 
@@ -1744,6 +1847,10 @@ foxglove::QosProfile FoxgloveBridge::classifyRemoteAccessQos(
   // and every publisher offers both Reliable and TransientLocal. Anything else falls back to
   // the default (lossy data-track) profile.
   foxglove::QosProfile profile;
+  // Plugin channels are not ROS topics, even if they share a ROS topic's name.
+  if (t_creatingPluginChannel || pluginChannelOwner(channel.id()).has_value()) {
+    return profile;
+  }
   const auto info = collectTopicQosInfo(std::string(channel.topic()));
 
   if (info.bestEffortForced || info.publisherCount == 0) {

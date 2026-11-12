@@ -9,7 +9,6 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <foxglove/channel.hpp>
-#include <foxglove/context.hpp>
 #include <foxglove/error.hpp>
 #include <foxglove_bridge/channel_source_plugin.hpp>
 
@@ -18,18 +17,20 @@ namespace foxglove_bridge_test_plugins {
 constexpr char TEST_PLUGIN_MESSAGE[] = R"({"value":42})";
 constexpr char TEST_PLUGIN_SCHEMA[] = R"({"type":"object"})";
 
-/// Serves one JSON channel, "/<instance name>/data", and logs a fixed message while a client is
-/// subscribed.
+/// Serves one JSON channel, on the topic in the `<instance name>.topic` parameter, which defaults
+/// to
+/// "/<instance name>/data". Logs a fixed message while a client is subscribed.
 class TestChannelSourcePlugin : public foxglove_bridge::ChannelSourcePlugin {
 public:
   void initialize(rclcpp::Node& node, const std::string& name,
-                  const foxglove::Context& context) override {
+                  foxglove_bridge::ChannelSourcePluginChannels& channels) override {
+    const auto topic = node.declare_parameter<std::string>(name + ".topic", "/" + name + "/data");
     foxglove::Schema schema;
     schema.name = "test_plugin.Data";
     schema.encoding = "jsonschema";
     schema.data = reinterpret_cast<const std::byte*>(TEST_PLUGIN_SCHEMA);
     schema.data_len = sizeof(TEST_PLUGIN_SCHEMA) - 1;
-    auto channel = foxglove::RawChannel::create("/" + name + "/data", "json", schema, context);
+    auto channel = channels.createRaw(topic, "json", schema);
     if (!channel.has_value()) {
       throw std::runtime_error(std::string("failed to create channel: ") +
                                foxglove::strerror(channel.error()));
@@ -64,22 +65,8 @@ private:
 class ThrowingPlugin : public foxglove_bridge::ChannelSourcePlugin {
 public:
   void initialize(rclcpp::Node& /*node*/, const std::string& /*name*/,
-                  const foxglove::Context& /*context*/) override {
+                  foxglove_bridge::ChannelSourcePluginChannels& /*channels*/) override {
     throw std::runtime_error("initialization failure requested by test");
-  }
-
-  void shutdown() override {}
-};
-
-/// Claims to be built against another bridge version.
-class VersionMismatchPlugin : public foxglove_bridge::ChannelSourcePlugin {
-public:
-  VersionMismatchPlugin()
-      : foxglove_bridge::ChannelSourcePlugin("0.0.0") {}
-
-  void initialize(rclcpp::Node& /*node*/, const std::string& /*name*/,
-                  const foxglove::Context& /*context*/) override {
-    throw std::logic_error("initialized despite the version mismatch");
   }
 
   void shutdown() override {}
@@ -90,6 +77,4 @@ public:
 PLUGINLIB_EXPORT_CLASS(foxglove_bridge_test_plugins::TestChannelSourcePlugin,
                        foxglove_bridge::ChannelSourcePlugin)
 PLUGINLIB_EXPORT_CLASS(foxglove_bridge_test_plugins::ThrowingPlugin,
-                       foxglove_bridge::ChannelSourcePlugin)
-PLUGINLIB_EXPORT_CLASS(foxglove_bridge_test_plugins::VersionMismatchPlugin,
                        foxglove_bridge::ChannelSourcePlugin)

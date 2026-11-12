@@ -164,7 +164,7 @@ Channel source plugins serve data that does not come from ROS, such as a shared-
 > [!NOTE]
 > Channel source plugins are experimental. The interface may change in any release.
 
-A plugin is a [pluginlib](https://docs.ros.org/en/jazzy/Tutorials/Beginner-Client-Libraries/Pluginlib.html) class deriving from `foxglove_bridge::ChannelSourcePlugin`, which is documented in [`channel_source_plugin.hpp`](include/foxglove_bridge/channel_source_plugin.hpp). In `initialize()` it creates `foxglove::RawChannel`s on the given context, and it logs messages to them until `shutdown()`.
+A plugin is a [pluginlib](https://docs.ros.org/en/jazzy/Tutorials/Beginner-Client-Libraries/Pluginlib.html) class deriving from `foxglove_bridge::ChannelSourcePlugin`, which is documented in [`channel_source_plugin.hpp`](include/foxglove_bridge/channel_source_plugin.hpp). In `initialize()` it creates its channels through the given `ChannelSourcePluginChannels`, either `foxglove::RawChannel`s with `createRaw()` or typed SDK channels with `createTyped<T>()`, and it logs messages to them until `shutdown()`.
 
 ```cpp
 #include <optional>
@@ -182,9 +182,9 @@ namespace my_package {
 class MyChannelSource : public foxglove_bridge::ChannelSourcePlugin {
 public:
   void initialize(rclcpp::Node& node, const std::string& name,
-                  const foxglove::Context& context) override {
+                  foxglove_bridge::ChannelSourcePluginChannels& channels) override {
     auto topic = node.declare_parameter<std::string>(name + ".topic", "/my_source");
-    auto channel = foxglove::RawChannel::create(topic, "json", std::nullopt, context);
+    auto channel = channels.createRaw(topic, "json");
     if (!channel.has_value()) {
       throw std::runtime_error(foxglove::strerror(channel.error()));
     }
@@ -227,7 +227,7 @@ install(TARGETS my_channel_source LIBRARY DESTINATION lib)
 </library>
 ```
 
-In the plugin's `package.xml`, depend on the exact foxglove_bridge release it is built against, replacing `X.Y.Z`. The bridge shares its copy of the Foxglove SDK with plugins, so it refuses to load plugins built against a different foxglove_bridge version.
+In the plugin's `package.xml`, depend on the exact foxglove_bridge release it is built against, replacing `X.Y.Z`. The bridge shares its copy of the Foxglove SDK with plugins, so plugins built against a different foxglove_bridge version fail to load.
 
 ```xml
 <depend version_eq="X.Y.Z">foxglove_bridge</depend>
@@ -253,7 +253,7 @@ Plugins run in the bridge process, so keep the following in mind.
 - If `initialize()` throws, close the channels created so far first. Otherwise they stay advertised.
 - Timers and subscriptions a plugin creates on the node share the bridge's default callback group. Create a separate callback group for anything that may block.
 - `shutdown()` must stop all of the plugin's threads and callbacks. It is also called when bridge startup fails.
-- The bridge does not check plugin topics against ROS topic names, and `topic_whitelist` does not apply to plugin channels.
+- A channel identical to a ROS topic's channel or to another instance's channel is refused, since the SDK would return the existing channel. If a plugin creates its channel first, the bridge does not advertise the identical ROS topic. Plugin channels may share a topic name with different encodings or schemas, but clients then see that topic twice. `topic_whitelist` does not apply to plugin channels.
 - With `remote_access`, plugin channels are always sent with lossy delivery.
 
 ### Diagnostic topics

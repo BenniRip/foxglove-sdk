@@ -9,6 +9,6 @@
   </class>
   <class type="foxglove_bridge_test_plugins::VersionMismatchPlugin"
          base_class_type="foxglove_bridge::ChannelSourcePlugin">
-    <description>Claims to be built against another foxglove_bridge version.</description>
+    <description>Built as if against another foxglove_bridge version.</description>
   </class>
 </library>

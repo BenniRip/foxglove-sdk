@@ -4,9 +4,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <regex>
 #include <thread>
@@ -162,9 +164,23 @@ private:
   std::atomic<bool> _shuttingDown = false;
   foxglove::Context _serverContext;
 
+  class PluginChannels;
+  struct ChannelSourcePluginInstance {
+    // Declared before the plugin, which may use it until it is destroyed.
+    std::unique_ptr<PluginChannels> channels;
+    pluginlib::UniquePtr<ChannelSourcePlugin> plugin;
+  };
   // The loader must outlive the plugins it created, so it is declared first.
   std::unique_ptr<pluginlib::ClassLoader<ChannelSourcePlugin>> _channelSourcePluginLoader;
-  std::vector<pluginlib::UniquePtr<ChannelSourcePlugin>> _channelSourcePlugins;
+  // In load order.
+  std::vector<ChannelSourcePluginInstance> _channelSourcePlugins;
+  // Owning instance name of each plugin channel. Acquired after _subscriptionsMutex, and never held
+  // while creating a channel, since the remote access QoS classifier may run synchronously then.
+  std::mutex _pluginChannelOwnersMutex;
+  std::unordered_map<ChannelId, std::string> _pluginChannelOwners;
+  // ROS topics not advertised because a plugin serves an identical channel. Guarded by
+  // _subscriptionsMutex.
+  std::unordered_set<std::string> _rosTopicsServedByPlugins;
 
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr _clientCountPublisher;
 
@@ -173,6 +189,18 @@ private:
   void loadChannelSourcePlugin(const std::string& name);
 
   void shutdownChannelSourcePlugins();
+
+  /// Destroys the plugins in reverse load order.
+  void destroyChannelSourcePlugins();
+
+  /// Creates a channel for the plugin instance `owner` and returns whether the instance may use
+  /// it, which it may not if the channel already belongs to a ROS topic or another instance.
+  bool createAndClaimPluginChannel(
+    const std::string& owner,
+    const std::function<std::optional<uint64_t>(const foxglove::Context&)>& createChannel);
+
+  /// Returns the instance that owns a plugin channel, or nullopt for other channels.
+  std::optional<std::string> pluginChannelOwner(ChannelId channelId);
 
   void subscribeConnectionGraph(bool subscribe);
 

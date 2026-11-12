@@ -5,6 +5,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -84,6 +85,18 @@ bool contains(const std::vector<std::string>& logs, const std::string& text) {
 bool infoLogged(const std::string& text) {
   std::lock_guard<std::mutex> lock(g_logsMutex);
   return contains(g_infoLogs, text);
+}
+
+/// Returns the position of the first info log containing `text`, or nullopt.
+std::optional<size_t> infoLogPosition(const std::string& text) {
+  std::lock_guard<std::mutex> lock(g_logsMutex);
+  const auto it = std::find_if(g_infoLogs.begin(), g_infoLogs.end(), [&text](const auto& log) {
+    return log.find(text) != std::string::npos;
+  });
+  if (it == g_infoLogs.end()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(it - g_infoLogs.begin());
 }
 
 /// Returns the port from the bridge's "Server listening" log. The port parameter is read-only, so
@@ -173,7 +186,8 @@ TEST(ChannelSourcePluginTest, failingInstancesAreSkippedWithAnError) {
   EXPECT_TRUE(contains(g_startupErrors, "instance 'throwing': initialization failure"));
   EXPECT_TRUE(contains(g_startupErrors, "instance 'unknown_class'"));
   EXPECT_TRUE(contains(g_startupErrors, "parameter 'no_class.plugin' is not set"));
-  EXPECT_TRUE(contains(g_startupErrors, "built against foxglove_bridge 0.0.0"));
+  EXPECT_TRUE(contains(g_startupErrors, "instance 'version_mismatch'"));
+  EXPECT_TRUE(contains(g_startupErrors, "rebuild it"));
   EXPECT_TRUE(contains(g_startupErrors,
                        "Ignoring duplicate channel source plugin instance "
                        "'test_plugin'"));
@@ -186,6 +200,44 @@ TEST(ChannelSourcePluginTest, pluginsAreShutDownWithTheBridge) {
     foxglove_bridge::FoxgloveBridge bridge(probeBridgeOptions("shutdown_test_bridge"));
     EXPECT_FALSE(infoLogged("Test plugin instance 'probe' shut down"));
   }
+  EXPECT_TRUE(infoLogged("Test plugin instance 'probe' shut down"));
+}
+
+TEST(ChannelSourcePluginTest, pluginsAreShutDownInReverseLoadOrder) {
+  clearInfoLogs();
+  auto nodeOptions = probeBridgeOptions("shutdown_order_test_bridge", {"probe", "second"});
+  nodeOptions.append_parameter_override("second.plugin", TEST_PLUGIN_CLASS);
+  { foxglove_bridge::FoxgloveBridge bridge(nodeOptions); }
+  const auto probePosition = infoLogPosition("Test plugin instance 'probe' shut down");
+  const auto secondPosition = infoLogPosition("Test plugin instance 'second' shut down");
+  ASSERT_TRUE(probePosition.has_value());
+  ASSERT_TRUE(secondPosition.has_value());
+  EXPECT_LT(*secondPosition, *probePosition);
+}
+
+TEST(ChannelSourcePluginTest, channelIdenticalToAnotherInstancesChannelIsRefused) {
+  // Prefixed like the bridge under test, so that its errors are captured.
+  auto nodeOptions =
+    probeBridgeOptions("foxglove_bridge_channel_owner_test_bridge", {"probe", "clone"});
+  nodeOptions.append_parameter_override("clone.plugin", TEST_PLUGIN_CLASS);
+  nodeOptions.append_parameter_override("clone.topic", "/probe/data");
+  takeErrorLogs();
+  {
+    foxglove_bridge::FoxgloveBridge bridge(nodeOptions);
+    const auto errors = takeErrorLogs();
+    EXPECT_TRUE(contains(errors, "instance 'clone' cannot use channel"));
+    EXPECT_TRUE(contains(errors, "identical to a channel of instance 'probe'"));
+    EXPECT_TRUE(contains(errors, "Failed to load channel source plugin instance 'clone'"));
+  }
+}
+
+TEST(ChannelSourcePluginTest, invalidRequiredValueFailsBridgeStartup) {
+  clearInfoLogs();
+  auto nodeOptions = probeBridgeOptions("invalid_required_test_bridge", {"probe", "invalid"});
+  nodeOptions.append_parameter_override("invalid.plugin", TEST_PLUGIN_CLASS);
+  nodeOptions.append_parameter_override("invalid.required", "true");
+  EXPECT_THROW(foxglove_bridge::FoxgloveBridge{nodeOptions},
+               rclcpp::exceptions::InvalidParameterTypeException);
   EXPECT_TRUE(infoLogged("Test plugin instance 'probe' shut down"));
 }
 
