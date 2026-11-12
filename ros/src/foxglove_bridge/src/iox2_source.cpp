@@ -112,9 +112,9 @@ void Iox2Source::setupSubscribers(const foxglove::Context& context,
       throw std::runtime_error("iox2 source: invalid schema file path '" + bfbsPath.string() + "'");
     }
 
-    _entries.push_back(std::unique_ptr<Entry>(
-      new Entry{cfg.serviceName, cfg.topic, bfbsPath, std::move(channelResult.value()),
-                std::nullopt, std::nullopt, std::nullopt, false}));
+    _entries.push_back(std::make_unique<Entry>(Entry{cfg.serviceName, cfg.topic, bfbsPath,
+                                                     std::move(channelResult.value()), std::nullopt,
+                                                     std::nullopt, std::nullopt, false}));
     RCLCPP_INFO(_node.get_logger(), "iox2 source: '%s' -> Foxglove '%s' (%s)",
                 cfg.serviceName.c_str(), cfg.topic.c_str(), cfg.schemaName.c_str());
     tryOpen(*_entries.back());
