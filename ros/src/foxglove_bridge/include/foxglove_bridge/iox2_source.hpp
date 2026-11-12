@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,10 +48,12 @@ private:
   struct Entry {
     std::string serviceName;
     std::string topic;
+    std::filesystem::path bfbsPath;
     foxglove::RawChannel channel;
     // Declared before subscriber: a PortFactory must outlive the ports it creates.
-    Service service;
-    Subscriber subscriber;
+    std::optional<Service> service;
+    std::optional<Subscriber> subscriber;
+    std::optional<iox2::PublishSubscribeOpenError> lastOpenError;
     bool warnedLogError = false;
   };
 
@@ -63,6 +66,9 @@ private:
 
   std::vector<Config> loadParameters();
   void setupSubscribers(const foxglove::Context& context, const std::vector<Config>& configs);
+  /// Opens the entry's service if a publisher has created it; never creates one.
+  void tryOpen(Entry& entry);
+  void openPending();
   void pollOnce();
   /// Returns false on a fatal receive error, so the caller can drop the entry.
   bool drain(Entry& entry);
@@ -72,6 +78,7 @@ private:
   std::unique_ptr<IpcNode> _iox2Node;
   std::vector<std::unique_ptr<Entry>> _entries;
   rclcpp::TimerBase::SharedPtr _pollTimer;
+  rclcpp::TimerBase::SharedPtr _openTimer;
 };
 
 }  // namespace foxglove_bridge

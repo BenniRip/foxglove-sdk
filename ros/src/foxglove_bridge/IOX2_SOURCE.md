@@ -87,8 +87,11 @@ iox2 services are configured via ROS parameters under the `iox2.` prefix. See
 | `iox2.schema_names` | string[] | Foxglove schema names (parallel) |
 | `iox2.bfbs_files` | string[] | `.bfbs` files relative to `schema_dir` (parallel); also registered as the iceoryx2 service schema |
 
-A service whose schema file does not match the publisher's registered one fails to open;
-the source logs the failure and skips that service instead of taking down the bridge.
+The source only opens services, it never creates them: the publisher sets a service's limits
+(publishers, subscribers, buffer size), and a service the bridge created with iceoryx2's
+defaults would refuse a publisher that asks for more. A service that does not exist yet, or
+fails to open, for example because its schema file does not match the publisher's registered
+one, is retried every second; its Foxglove channel is advertised from the start.
 
 ## Limitations
 
