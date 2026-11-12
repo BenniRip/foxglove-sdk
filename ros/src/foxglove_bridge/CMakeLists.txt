@@ -358,7 +358,7 @@ install(DIRECTORY launch
 install(FILES include/foxglove_bridge/utils.hpp
   DESTINATION include/${PROJECT_NAME}/
 )
-# Found through plugin_api.
+# Plugins include it through plugin_api.
 install(FILES include/foxglove_bridge/channel_source_plugin.hpp
   DESTINATION include/${PROJECT_NAME}/
 )

@@ -17,8 +17,7 @@ namespace foxglove_bridge_test_plugins {
 constexpr char TEST_PLUGIN_MESSAGE[] = R"({"value":42})";
 constexpr char TEST_PLUGIN_SCHEMA[] = R"({"type":"object"})";
 
-/// Serves one JSON channel, on the topic in the `<instance name>.topic` parameter, which defaults
-/// to
+/// Serves one JSON channel on the topic in `<instance name>.topic`, by default
 /// "/<instance name>/data". Logs a fixed message while a client is subscribed.
 class TestChannelSourcePlugin : public foxglove_bridge::ChannelSourcePlugin {
 public:
