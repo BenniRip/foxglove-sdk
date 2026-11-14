@@ -9,12 +9,15 @@
 #include <unordered_set>
 
 #include <rclcpp/version.h>
+#include <rcpputils/scope_exit.hpp>
 #include <resource_retriever/retriever.hpp>
 
 #include <foxglove_bridge/cdr_serializer.hpp>
 #include <foxglove_bridge/ros2_foxglove_bridge.hpp>
 #include <foxglove_bridge/utils.hpp>
 #include <foxglove_bridge/version.hpp>
+
+#include "channel_source_plugin_host.hpp"
 
 namespace foxglove_bridge {
 namespace {
@@ -192,6 +195,8 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   const bool publishClientCount = this->get_parameter(PARAM_PUBLISH_CLIENT_COUNT).as_bool();
   const auto messageBacklogSize =
     saturatingToSizeT(this->get_parameter(PARAM_MESSAGE_BACKLOG_SIZE).as_int());
+  const auto channelSourcePlugins =
+    this->get_parameter(PARAM_CHANNEL_SOURCE_PLUGINS).as_string_array();
 
   const bool debug = this->get_parameter(PARAM_DEBUG).as_bool();
   if (debug) {
@@ -202,6 +207,15 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   }
 
   _serverContext = foxglove::Context::create();
+
+  _channelSourcePlugins = std::make_unique<ChannelSourcePluginHost>(*this, _serverContext);
+  // The destructor does not run if the rest of startup throws, so shut loaded plugins down here.
+  auto pluginShutdownGuard = rcpputils::make_scope_exit([this]() {
+    _channelSourcePlugins->shutdown();
+    _channelSourcePlugins->destroy();
+  });
+  // Before the server starts, so plugins' channels are advertised to the first clients.
+  _channelSourcePlugins->load(channelSourcePlugins);
 
   foxglove::WebSocketServerOptions sdkServerOptions;
   _capabilities = processCapabilities(capabilities);
@@ -472,6 +486,8 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
 
   _rosgraphPollThread =
     std::make_unique<std::thread>(std::bind(&FoxgloveBridge::rosgraphPollThread, this));
+
+  pluginShutdownGuard.cancel();
 }
 
 FoxgloveBridge::~FoxgloveBridge() {
@@ -480,6 +496,7 @@ FoxgloveBridge::~FoxgloveBridge() {
   if (_rosgraphPollThread) {
     _rosgraphPollThread->join();
   }
+  _channelSourcePlugins->shutdown();
   if (_sysinfoPublisher) {
     _sysinfoPublisher->stop();
   }
@@ -501,6 +518,7 @@ FoxgloveBridge::~FoxgloveBridge() {
     _paramOpCv.notify_all();
     _paramWorkerThread->join();
   }
+  _channelSourcePlugins->destroy();
   RCLCPP_INFO(this->get_logger(), "Shutdown complete");
 }
 
@@ -983,7 +1001,9 @@ void FoxgloveBridge::createOrIncrementSubscriptionLocked(ChannelId channelId, Cl
                                                          std::optional<SinkId> sinkId) {
   auto channelIt = _channels.find(channelId);
   if (channelIt == _channels.end()) {
-    RCLCPP_ERROR(this->get_logger(), "received subscribe request for unknown channel: %" PRIu64,
+    // System info and plugin channels, or a ROS topic that disappeared just before the request.
+    RCLCPP_DEBUG(this->get_logger(),
+                 "Not creating a ROS subscription for channel %" PRIu64 ": not a ROS channel",
                  static_cast<uint64_t>(channelId));
     return;
   }
@@ -1070,10 +1090,17 @@ void FoxgloveBridge::removeOrDecrementSubscriptionLocked(ChannelId channelId, Cl
                                                          bool isGateway) {
   auto subIt = _subscriptions.find(channelId);
   if (subIt == _subscriptions.end()) {
-    RCLCPP_ERROR(this->get_logger(),
-                 "Client %u tried unsubscribing from channel %" PRIu64
-                 " but no subscription exists",
-                 clientId, static_cast<uint64_t>(channelId));
+    if (_channels.find(channelId) != _channels.end()) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Client %u tried unsubscribing from channel %" PRIu64
+                   " but no subscription exists",
+                   clientId, static_cast<uint64_t>(channelId));
+    } else {
+      // System info and plugin channels, or a ROS channel that was just removed.
+      RCLCPP_DEBUG(this->get_logger(),
+                   "Client %u unsubscribed from channel %" PRIu64 ", which is not a ROS channel",
+                   clientId, static_cast<uint64_t>(channelId));
+    }
     return;
   }
 
