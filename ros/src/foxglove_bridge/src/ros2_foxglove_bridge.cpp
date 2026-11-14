@@ -208,10 +208,7 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
 
   _serverContext = foxglove::Context::create();
 
-  _channelSourcePlugins = std::make_unique<ChannelSourcePluginHost>(
-    *this, _serverContext, _subscriptionsMutex, [this](uint64_t channelId) {
-      return _channels.find(channelId) != _channels.end();
-    });
+  _channelSourcePlugins = std::make_unique<ChannelSourcePluginHost>(*this, _serverContext);
   // The destructor does not run if the rest of startup throws, so shut loaded plugins down here.
   auto pluginShutdownGuard = rcpputils::make_scope_exit([this]() {
     _channelSourcePlugins->shutdown();
@@ -685,16 +682,6 @@ void FoxgloveBridge::updateAdvertisedTopics(
       }
 
       const ChannelId channelId = channelResult.value().id();
-      if (const auto owner = _channelSourcePlugins->channelOwner(channelId)) {
-        // The SDK returned the plugin's identical channel. Dropping the handle keeps it open.
-        if (_rosTopicsServedByPlugins.insert(topic).second) {
-          RCLCPP_WARN(this->get_logger(),
-                      "Not advertising ROS topic \"%s\": channel source plugin instance '%s' "
-                      "serves an identical channel",
-                      topic.c_str(), owner->c_str());
-        }
-        continue;
-      }
       RCLCPP_INFO(this->get_logger(), "Advertising new channel %" PRIu64 " for topic \"%s\"",
                   static_cast<uint64_t>(channelId), topic.c_str());
       _channels.insert({channelId, std::move(channelResult.value())});
@@ -1690,11 +1677,6 @@ foxglove::QosProfile FoxgloveBridge::classifyRemoteAccessQos(
   // and every publisher offers both Reliable and TransientLocal. Anything else falls back to
   // the default (lossy data-track) profile.
   foxglove::QosProfile profile;
-  // Plugin channels are not ROS topics, even if they share a ROS topic's name.
-  if (ChannelSourcePluginHost::creatingChannelOnThisThread() ||
-      _channelSourcePlugins->channelOwner(channel.id()).has_value()) {
-    return profile;
-  }
   const auto info = collectTopicQosInfo(std::string(channel.topic()));
 
   if (info.bestEffortForced || info.publisherCount == 0) {

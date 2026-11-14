@@ -4,11 +4,13 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <foxglove/channel.hpp>
+#include <foxglove/context.hpp>
 #include <foxglove/error.hpp>
 #include <foxglove_bridge/channel_source_plugin.hpp>
 
@@ -17,19 +19,18 @@ namespace foxglove_bridge_test_plugins {
 constexpr char TEST_PLUGIN_MESSAGE[] = R"({"value":42})";
 constexpr char TEST_PLUGIN_SCHEMA[] = R"({"type":"object"})";
 
-/// Serves one JSON channel on the topic in `<instance name>.topic`, by default
-/// "/<instance name>/data". Logs a fixed message while a client is subscribed.
+/// Serves one JSON channel on "/<instance name>/data", logging a fixed message while a client is
+/// subscribed.
 class TestChannelSourcePlugin : public foxglove_bridge::ChannelSourcePlugin {
 public:
   void initialize(rclcpp::Node& node, const std::string& name,
-                  foxglove_bridge::ChannelSourcePluginChannels& channels) override {
-    const auto topic = node.declare_parameter<std::string>(name + ".topic", "/" + name + "/data");
+                  const foxglove::Context& context) override {
     foxglove::Schema schema;
     schema.name = "test_plugin.Data";
     schema.encoding = "jsonschema";
     schema.data = reinterpret_cast<const std::byte*>(TEST_PLUGIN_SCHEMA);
     schema.data_len = sizeof(TEST_PLUGIN_SCHEMA) - 1;
-    auto channel = channels.createRaw(topic, "json", schema);
+    auto channel = foxglove::RawChannel::create("/" + name + "/data", "json", schema, context);
     if (!channel.has_value()) {
       throw std::runtime_error(std::string("failed to create channel: ") +
                                foxglove::strerror(channel.error()));
@@ -64,7 +65,7 @@ private:
 class ThrowingPlugin : public foxglove_bridge::ChannelSourcePlugin {
 public:
   void initialize(rclcpp::Node& /*node*/, const std::string& /*name*/,
-                  foxglove_bridge::ChannelSourcePluginChannels& /*channels*/) override {
+                  const foxglove::Context& /*context*/) override {
     throw std::runtime_error("initialization failure requested by test");
   }
 

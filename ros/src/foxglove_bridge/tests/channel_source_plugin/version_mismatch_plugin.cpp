@@ -19,7 +19,7 @@ public:
   }
 
   void initialize(rclcpp::Node& /*node*/, const std::string& /*name*/,
-                  foxglove_bridge::ChannelSourcePluginChannels& /*channels*/) override {}
+                  const foxglove::Context& /*context*/) override {}
 
   void shutdown() override {}
 };

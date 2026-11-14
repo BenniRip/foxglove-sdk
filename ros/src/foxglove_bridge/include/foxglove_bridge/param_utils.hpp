@@ -36,8 +36,6 @@ constexpr char PARAM_MESSAGE_BACKLOG_SIZE[] = "message_backlog_size";
 constexpr char PARAM_CHANNEL_SOURCE_PLUGINS[] = "channel_source_plugins";
 // "<instance name>.plugin" holds the pluginlib class name of each instance.
 constexpr char PARAM_CHANNEL_SOURCE_PLUGIN_CLASS[] = "plugin";
-// "<instance name>.required" makes bridge startup fail if the instance fails to load.
-constexpr char PARAM_CHANNEL_SOURCE_PLUGIN_REQUIRED[] = "required";
 
 constexpr char PARAM_REMOTE_ACCESS[] = "remote_access";
 constexpr char PARAM_DEVICE_TOKEN[] = "device_token";

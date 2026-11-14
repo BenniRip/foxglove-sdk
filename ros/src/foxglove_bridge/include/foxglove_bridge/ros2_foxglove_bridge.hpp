@@ -162,11 +162,8 @@ private:
   std::atomic<bool> _shuttingDown = false;
   foxglove::Context _serverContext;
 
-  // Declared after _serverContext and _subscriptionsMutex, which it uses.
+  // Declared after _serverContext, which it uses.
   std::unique_ptr<ChannelSourcePluginHost> _channelSourcePlugins;
-  // ROS topics not advertised because a plugin serves an identical channel. Guarded by
-  // _subscriptionsMutex.
-  std::unordered_set<std::string> _rosTopicsServedByPlugins;
 
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr _clientCountPublisher;
 
